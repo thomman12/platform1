@@ -8,17 +8,17 @@ import { Database } from '@/types/supabase';
 
 /* ---------- map preset avatar ids -> thumb paths ---------- */
 const AVATAR_THUMBS: Record<string, string> = {
-  a1:  '/avatars/a1-thumb.png',
-  a2:  '/avatars/a2-thumb.png',
-  a3:  '/avatars/a3-thumb.png',
-  a4:  '/avatars/a4-thumb.png',
-  a5:  '/avatars/a5-thumb.png',
-  a6:  '/avatars/a6-thumb.png',
-  a7:  '/avatars/a7-thumb.png',
-  a8:  '/avatars/a8-thumb.png',
-  a9:  '/avatars/a9-thumb.png',
-  a10: '/avatars/a10-thumb.png',
-  a11: '/avatars/a11-thumb.png',
+  a1:  '/avatars/thumbs/a1-thumb.png',
+  a2:  '/avatars/thumbs/a2-thumb.png',
+  a3:  '/avatars/thumbs/a3-thumb.png',
+  a4:  '/avatars/thumbs/a4-thumb.png',
+  a5:  '/avatars/thumbs/a5-thumb.png',
+  a6:  '/avatars/thumbs/a6-thumb.png',
+  a7:  '/avatars/thumbs/a7-thumb.png',
+  a8:  '/avatars/thumbs/a8-thumb.png',
+  a9:  '/avatars/thumbs/a9-thumb.png',
+  a10: '/avatars/thumbs/a10-thumb.png',
+  a11: '/avatars/thumbs/a11-thumb.png',
 };
 function resolveAvatarThumb(id?: string | null) {
   if (!id) return null;

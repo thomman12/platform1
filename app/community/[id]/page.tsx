@@ -19,6 +19,9 @@ type Community = {
   description: string | null;
   visibility: Visibility;
   creator_id: string;
+  banner_path?: string | null;
+  banner_alt?: string | null;
+  banner_updated_at?: string | null;
 };
 
 type PostWithAuthor = Database['public']['Tables']['posts']['Row'] & {
@@ -34,17 +37,17 @@ type VoteCount = Record<string, { upvotes: number; downvotes: number }>;
    Preset avatar thumbs (your assets)
 ========================= */
 const AVATAR_THUMBS: Record<string, string> = {
-  a1: '/avatars/a1-thumb.png',
-  a2: '/avatars/a2-thumb.png',
-  a3: '/avatars/a3-thumb.png',
-  a4: '/avatars/a4-thumb.png',
-  a5: '/avatars/a5-thumb.png',
-  a6: '/avatars/a6-thumb.png',
-  a7: '/avatars/a7-thumb.png',
-  a8: '/avatars/a8-thumb.png',
-  a9: '/avatars/a9-thumb.png',
-  a10: '/avatars/a10-thumb.png',
-  a11: '/avatars/a11-thumb.png',
+  a1: '/avatars/thumbs/a1-thumb.png',
+  a2: '/avatars/thumbs/a2-thumb.png',
+  a3: '/avatars/thumbs/a3-thumb.png',
+  a4: '/avatars/thumbs/a4-thumb.png',
+  a5: '/avatars/thumbs/a5-thumb.png',
+  a6: '/avatars/thumbs/a6-thumb.png',
+  a7: '/avatars/thumbs/a7-thumb.png',
+  a8: '/avatars/thumbs/a8-thumb.png',
+  a9: '/avatars/thumbs/a9-thumb.png',
+  a10: '/avatars/thumbs/a10-thumb.png',
+  a11: '/avatars/thumbs/a11-thumb.png',
 };
 const resolveAvatarThumb = (id?: string | null) => (id ? AVATAR_THUMBS[id] ?? null : null);
 
@@ -108,6 +111,8 @@ export default function CommunityPage() {
   // sidebar store (for instant updates)
   const { addFollowed, followed } = useFollowedStore();
 
+  const BUCKET = 'community-banners';
+
   /* who am I (optional login) */
   useEffect(() => {
     (async () => {
@@ -133,10 +138,10 @@ export default function CommunityPage() {
       setLoading(true);
       setErrorText(null);
 
-      // community metadata (RLS allows)
+      // community metadata (+ banner cols)
       const { data: comm, error: ce } = await supabase
         .from('communities')
-        .select('id, name, description, visibility, creator_id')
+        .select('id, name, description, visibility, creator_id, banner_path, banner_alt, banner_updated_at')
         .eq('id', communityId)
         .single();
 
@@ -175,6 +180,14 @@ export default function CommunityPage() {
   }, [communityId, supabase, userId]);
 
   const isAdmin = isOwner || role === 'mod';
+
+  /* derive banner URL with cache-bust */
+  const bannerUrl = useMemo(() => {
+    if (!community?.banner_path) return null;
+    const { data } = supabase.storage.from(BUCKET).getPublicUrl(community.banner_path);
+    const bust = community.banner_updated_at ? `?v=${encodeURIComponent(community.banner_updated_at)}` : '';
+    return data.publicUrl ? data.publicUrl + bust : null;
+  }, [community?.banner_path, community?.banner_updated_at, supabase]);
 
   /* permissions derived from meta */
   const canSeePosts = useMemo(() => {
@@ -215,6 +228,40 @@ export default function CommunityPage() {
         setErrorText(e?.message || 'Failed to load posts.');
       }
     })();
+  }, [community, canSeePosts, supabase]);
+
+  /* realtime (only when visible) */
+  useEffect(() => {
+    if (!community || !canSeePosts) return;
+
+    const ch = supabase
+      .channel(`posts-status-${community.id}`)
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'posts', filter: `community_id=eq.${community.id}` },
+        (payload) => {
+          const updated = payload.new as Partial<PostWithAuthor> & { id: string };
+          setPosts((prev) =>
+            prev.map((p) =>
+              p.id === updated.id
+                ? {
+                    ...p,
+                    live_chat_status:
+                      (updated.live_chat_status as 'active' | 'ended' | null) ?? p.live_chat_status,
+                    has_live_chat: (updated.has_live_chat as boolean | null) ?? p.has_live_chat,
+                    audio_room_active:
+                      (updated.audio_room_active as boolean | null) ?? p.audio_room_active,
+                  }
+                : p
+            )
+          );
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(ch);
+    };
   }, [community, canSeePosts, supabase]);
 
   /* saved posts (when logged in & posts exist) */
@@ -387,150 +434,178 @@ export default function CommunityPage() {
   if (!community) return <p className="p-4">Community not found</p>;
 
   return (
-    <div className="p-6 max-w-3xl mx-auto">
-      {/* Header */}
-      <div className="bg-white border rounded p-5 shadow-sm mb-6">
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <h1 className="text-3xl font-bold">{community.name}</h1>
-            <p className="text-gray-600 mt-1">{community.description}</p>
-            <span className="inline-block mt-2 text-xs px-2 py-0.5 rounded bg-gray-100 text-gray-700">
-              {community.visibility}
-            </span>
+    <div className="p-0 sm:p-6 max-w-5xl mx-auto">
+      {/* HERO BANNER */}
+      <div className="relative mb-4 sm:mb-6 overflow-hidden rounded-none sm:rounded-lg border bg-gray-100">
+        {/* Banner or fallback */}
+        {bannerUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={bannerUrl}
+            alt={community.banner_alt || `${community.name} banner`}
+            className="w-full h-40 sm:h-56 md:h-72 object-cover"
+          />
+        ) : (
+          <div className="w-full h-40 sm:h-56 md:h-72 bg-gradient-to-r from-slate-200 to-slate-300" />
+        )}
+
+        {/* Gradient overlay for readability */}
+        <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/60 via-black/20 to-transparent" />
+
+        {/* Bottom content overlay */}
+        <div className="absolute inset-x-0 bottom-0 p-4 sm:p-6">
+          <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
+            <div className="text-white">
+              <h1 className="text-2xl sm:text-3xl font-bold drop-shadow">{community.name}</h1>
+              {community.description && (
+                <p className="mt-1 text-white/90 drop-shadow max-w-3xl line-clamp-2">
+                  {community.description}
+                </p>
+              )}
+              <span className="mt-2 inline-block text-[11px] uppercase tracking-wide px-2 py-0.5 rounded bg-white/15 text-white/95 backdrop-blur">
+                {community.visibility}
+              </span>
+            </div>
+
+            {/* Action buttons */}
+            <div className="flex items-center gap-2">
+              <button
+                disabled={!canClickJoin}
+                onClick={handleJoin}
+                className={`px-4 py-2 rounded text-white ${
+                  canClickJoin ? 'bg-blue-600 hover:bg-blue-700' : 'bg-white/30 text-white/80 cursor-default'
+                }`}
+                title={!canClickJoin ? 'Already joined or pending' : undefined}
+              >
+                {joinLabel}
+              </button>
+
+              {/* Admin/Settings */}
+              {isAdmin && (
+                <Link
+                  href={`/community/${community.id}/admin`}
+                  className="px-4 py-2 rounded bg-black/70 text-white hover:bg-black/80"
+                  title="Admin Controls"
+                >
+                  🛡️ Admin
+                </Link>
+              )}
+              {isOwner && (
+                <Link
+                  href={`/community/${community.id}/admin/settings`}
+                  className="px-4 py-2 rounded bg-white/85 text-gray-900 hover:bg-white"
+                  title="Community Settings"
+                >
+                  ⚙️ Settings
+                </Link>
+              )}
+            </div>
           </div>
-
-          <button
-            disabled={!canClickJoin}
-            onClick={handleJoin}
-            className={`px-4 py-2 rounded text-white ${
-              canClickJoin ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-400'
-            }`}
-            title={!canClickJoin ? 'Already joined or pending' : undefined}
-          >
-            {joinLabel}
-          </button>
         </div>
+      </div>
 
-        {/* Admin Controls button (owner or mod only) */}
-        {isAdmin && (
-          <div className="mt-4">
+      {/* Posts / content area */}
+      <div className="px-4 sm:px-0">
+        {/* Create Post (approved members only) */}
+        {canCreatePost && (
+          <div className="flex justify-end mb-4">
             <Link
-              href={`/community/${community.id}/admin`}
-              className="inline-flex items-center gap-2 rounded-md bg-gray-900 text-white px-4 py-2 hover:bg-black/85"
+              href={`/community/${community.id}/create-post`}
+              className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
             >
-              ⚙️ Admin Controls
+              ➕ Create Post
             </Link>
           </div>
         )}
 
-        {community.visibility !== 'public' && membership !== 'approved' && (
-          <p className="text-sm text-gray-500 mt-3">
-            Posts are only visible to approved members.
-          </p>
+        {/* Posts */}
+        {canSeePosts ? (
+          posts.length === 0 ? (
+            <div className="bg-white border rounded p-5 shadow-sm text-gray-500">
+              No posts yet.
+            </div>
+          ) : (
+            <ul className="space-y-4">
+              {posts.map((post) => {
+                let chatLabel = '';
+                let chatColor = '';
+                if (post.has_live_chat) {
+                  if (post.live_chat_status === 'active') {
+                    chatLabel = '💬 Enter Live Chat';
+                    chatColor = 'bg-purple-600';
+                  } else if (post.live_chat_status === 'ended') {
+                    chatLabel = '💬 View Live Chat';
+                    chatColor = 'bg-gray-500';
+                  } else {
+                    chatLabel = '💬 Start Live Chat';
+                    chatColor = 'bg-green-500';
+                  }
+                }
+
+                return (
+                  <li key={post.id} className="border p-4 rounded shadow-sm bg-white">
+                    <Link href={`/post/${post.id}`} className="block group">
+                      <h3 className="text-lg font-semibold group-hover:underline">{post.title}</h3>
+                    </Link>
+
+                    <div className="flex items-center gap-2 text-sm text-gray-500 mb-2">
+                      <Avatar
+                        username={post.profiles?.username}
+                        avatarId={post.profiles?.avatar_id ?? null}
+                        size={28}
+                      />
+                      <Link
+                        href={`/user/${post.user_id}`}
+                        className="font-medium text-blue-600 hover:underline"
+                      >
+                        {post.profiles?.username ?? 'Unknown'}
+                      </Link>
+                      <span>· {post.created_at ? new Date(post.created_at).toLocaleString() : ''}</span>
+                    </div>
+
+                    <p className="text-gray-700">
+                      {preview(post.content)}
+                    </p>
+
+                    <div className="mt-3 flex items-center space-x-4 text-sm">
+                      <button onClick={() => handleVote(post.id, 'upvote')}>🔼</button>
+                      <span>{voteCounts[post.id]?.upvotes ?? 0}</span>
+                      <button onClick={() => handleVote(post.id, 'downvote')}>🔽</button>
+                      <span>{voteCounts[post.id]?.downvotes ?? 0}</span>
+
+                      <button
+                        onClick={() => handleSave(post.id)}
+                        className={`ml-4 text-sm px-2 py-1 rounded ${
+                          savedPosts.has(post.id) ? 'bg-yellow-200' : 'bg-gray-200'
+                        }`}
+                      >
+                        {savedPosts.has(post.id) ? '🔖 Saved' : '📑 Save'}
+                      </button>
+
+                      <Link href={`/post/${post.id}`} className="ml-4 text-blue-600 hover:underline">
+                        Read more →
+                      </Link>
+
+                      {post.has_live_chat && (
+                        <Link
+                          href={`/chat/${post.id}`}
+                          className={`ml-auto inline-block ${chatColor} text-white px-4 py-1 rounded hover:opacity-90`}
+                        >
+                          {chatLabel}
+                        </Link>
+                      )}
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )
+        ) : (
+          <div className="bg-white border rounded p-5 shadow-sm text-gray-500">
+            Become a member to view posts.
+          </div>
         )}
       </div>
-
-      {/* Create Post (approved members only) */}
-      {canCreatePost && (
-        <div className="flex justify-end mb-4">
-          <Link
-            href={`/community/${community.id}/create-post`}
-            className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
-          >
-            ➕ Create Post
-          </Link>
-        </div>
-      )}
-
-      {/* Posts */}
-      {canSeePosts ? (
-        posts.length === 0 ? (
-          <div className="bg-white border rounded p-5 shadow-sm text-gray-500">
-            No posts yet.
-          </div>
-        ) : (
-          <ul className="space-y-4">
-            {posts.map((post) => {
-              let chatLabel = '';
-              let chatColor = '';
-              if (post.has_live_chat) {
-                if (post.live_chat_status === 'active') {
-                  chatLabel = '💬 Enter Live Chat';
-                  chatColor = 'bg-purple-600';
-                } else if (post.live_chat_status === 'ended') {
-                  chatLabel = '💬 View Live Chat';
-                  chatColor = 'bg-gray-500';
-                } else {
-                  chatLabel = '💬 Start Live Chat';
-                  chatColor = 'bg-green-500';
-                }
-              }
-
-              return (
-                <li key={post.id} className="border p-4 rounded shadow-sm bg-white">
-                  <Link href={`/post/${post.id}`} className="block group">
-                    <h3 className="text-lg font-semibold group-hover:underline">{post.title}</h3>
-                  </Link>
-
-                  <div className="flex items-center gap-2 text-sm text-gray-500 mb-2">
-                    <Avatar
-                      username={post.profiles?.username}
-                      avatarId={post.profiles?.avatar_id ?? null}
-                      size={28}
-                    />
-                    <Link
-                      href={`/user/${post.user_id}`}
-                      className="font-medium text-blue-600 hover:underline"
-                    >
-                      {post.profiles?.username ?? 'Unknown'}
-                    </Link>
-                    <span>· {post.created_at ? new Date(post.created_at).toLocaleString() : ''}</span>
-                  </div>
-
-                  <p className="text-gray-700">
-                    {(post.content ?? '').length > 180
-                      ? (post.content ?? '').slice(0, 180) + '…'
-                      : post.content ?? ''}
-                  </p>
-
-                  <div className="mt-3 flex items-center space-x-4 text-sm">
-                    <button onClick={() => handleVote(post.id, 'upvote')}>🔼</button>
-                    <span>{voteCounts[post.id]?.upvotes ?? 0}</span>
-                    <button onClick={() => handleVote(post.id, 'downvote')}>🔽</button>
-                    <span>{voteCounts[post.id]?.downvotes ?? 0}</span>
-
-                    <button
-                      onClick={() => handleSave(post.id)}
-                      className={`ml-4 text-sm px-2 py-1 rounded ${
-                        savedPosts.has(post.id) ? 'bg-yellow-200' : 'bg-gray-200'
-                      }`}
-                    >
-                      {savedPosts.has(post.id) ? '🔖 Saved' : '📑 Save'}
-                    </button>
-
-                    <Link href={`/post/${post.id}`} className="ml-4 text-blue-600 hover:underline">
-                      Read more →
-                    </Link>
-
-                    {post.has_live_chat && (
-                      <Link
-                        href={`/chat/${post.id}`}
-                        className={`ml-auto inline-block ${chatColor} text-white px-4 py-1 rounded hover:opacity-90`}
-                      >
-                        {chatLabel}
-                      </Link>
-                    )}
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        )
-      ) : (
-        <div className="bg-white border rounded p-5 shadow-sm text-gray-500">
-          Become a member to view posts.
-        </div>
-      )}
     </div>
   );
 }
