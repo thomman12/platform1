@@ -13,6 +13,9 @@ export interface Database {
           name: string;
           description: string | null;
           created_at: string | null;
+          post_requires_approval: boolean;
+          post_daily_limit: number | null;
+          blocked_words: string[];
         };
         Insert: {
           id?: string;
@@ -37,6 +40,10 @@ export interface Database {
           content: string | null;
           visibility: 'public' | 'private';
           created_at: string;
+          status: 'published' | 'pending' | 'removed';
+          approved_by: string | null;
+          approved_at: string | null;
+          mod_notes: string | null;
         };
         Insert: {
           id?: string;

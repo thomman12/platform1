@@ -18,6 +18,9 @@ type Community = {
   banner_path?: string | null;
   banner_alt?: string | null;
   banner_updated_at?: string | null;
+
+  /** New moderation toggle */
+  require_mod_review?: boolean | null;
 };
 
 type TabKey = 'general' | 'branding' | 'posting' | 'privacy' | 'roles' | 'danger';
@@ -48,6 +51,9 @@ export default function CommunitySettingsPage() {
   const [bannerUrl, setBannerUrl] = useState<string | null>(null); // public preview (with cache-bust)
   const [bannerUploading, setBannerUploading] = useState(false);
 
+  /** ===== Posting (single toggle) ===== */
+  const [requireMod, setRequireMod] = useState(false);
+
   const BUCKET = 'community-banners';
 
   useEffect(() => {
@@ -57,20 +63,42 @@ export default function CommunitySettingsPage() {
       const uid = auth?.user?.id ?? null;
       setUserId(uid);
 
-      // load community (+ banner cols)
-      const { data: comm } = await supabase
+      // load community (+ banner + moderation flag)
+      // If the require_mod_review column doesn't exist, Supabase will throw;
+      // we fall back to a basic select.
+      const fetchFull = await supabase
         .from('communities')
-        .select('id, name, description, visibility, creator_id, banner_path, banner_alt, banner_updated_at')
+        .select(
+          `
+          id, name, description, visibility, creator_id,
+          banner_path, banner_alt, banner_updated_at,
+          require_mod_review
+        `
+        )
         .eq('id', communityId)
         .maybeSingle();
 
-      if (!comm) {
+      let c: Community | null = null;
+
+      if (fetchFull.error) {
+        // Fallback if the new column isn't present yet
+        const { data: commBasic } = await supabase
+          .from('communities')
+          .select('id, name, description, visibility, creator_id, banner_path, banner_alt, banner_updated_at')
+          .eq('id', communityId)
+          .maybeSingle();
+
+        c = (commBasic as unknown as Community) ?? null;
+      } else {
+        c = (fetchFull.data as unknown as Community) ?? null;
+      }
+
+      if (!c) {
         setCommunity(null);
         setLoading(false);
         return;
       }
 
-      const c = comm as unknown as Community;
       setCommunity(c);
       setIsOwner(!!uid && c.creator_id === uid);
 
@@ -88,6 +116,9 @@ export default function CommunitySettingsPage() {
       } else {
         setBannerUrl(null);
       }
+
+      // Prime Posting
+      setRequireMod(Boolean(c.require_mod_review));
 
       setLoading(false);
     })();
@@ -141,7 +172,9 @@ export default function CommunitySettingsPage() {
         visibility,
       } as any)
       .eq('id', community.id)
-      .select('id, name, description, visibility, creator_id, banner_path, banner_alt, banner_updated_at')
+      .select(
+        'id, name, description, visibility, creator_id, banner_path, banner_alt, banner_updated_at'
+      )
       .single();
 
     if (upErr || !updated) {
@@ -213,7 +246,6 @@ export default function CommunitySettingsPage() {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // validation
     if (!/^image\/(png|jpe?g|webp)$/.test(file.type)) {
       alert('Please choose a PNG, JPG, or WEBP image.');
       return;
@@ -227,19 +259,16 @@ export default function CommunitySettingsPage() {
     const prevPath = community.banner_path || null;
 
     try {
-      // resize & choose output mime
       const { blob, mime } = await fileToResizedBlob(file, 1600);
       const ext = extFromMime(mime);
       const newPath = `${community.id}/banner_${Date.now()}.${ext}`;
 
-      // 1) upload to NEW key (atomic path swap pattern)
       const { error: upErr } = await supabase
         .storage
         .from(BUCKET)
         .upload(newPath, blob, { upsert: false, contentType: mime });
       if (upErr) throw upErr;
 
-      // 2) point community record to new path
       const nowIso = new Date().toISOString();
       const { data: updated, error: dbErr } = await supabase
         .from('communities')
@@ -252,7 +281,6 @@ export default function CommunitySettingsPage() {
         .select('id, name, description, visibility, creator_id, banner_path, banner_alt, banner_updated_at')
         .single();
 
-      // If DB update fails, roll back the new upload to avoid orphans
       if (dbErr || !updated) {
         await supabase.storage.from(BUCKET).remove([newPath]).catch(() => {});
         throw dbErr || new Error('Failed to save banner');
@@ -260,12 +288,10 @@ export default function CommunitySettingsPage() {
 
       setCommunity(updated as Community);
 
-      // 3) best-effort delete previous file
       if (prevPath && prevPath !== newPath) {
         await supabase.storage.from(BUCKET).remove([prevPath]).catch(() => {});
       }
 
-      // audit (best-effort)
       await supabase.from('community_mod_logs').insert([
         {
           community_id: community.id,
@@ -276,7 +302,6 @@ export default function CommunitySettingsPage() {
         } as any,
       ]);
 
-      // 4) refresh public URL with cache-bust
       const { data } = supabase.storage.from(BUCKET).getPublicUrl(updated.banner_path!);
       const bust = updated.banner_updated_at ? `?v=${encodeURIComponent(updated.banner_updated_at)}` : `?v=${Date.now()}`;
       setBannerUrl(data.publicUrl ? data.publicUrl + bust : null);
@@ -284,7 +309,6 @@ export default function CommunitySettingsPage() {
       alert('Upload failed: ' + (err?.message || err));
     } finally {
       setBannerUploading(false);
-      // allow re-selecting same file to re-trigger onChange
       if (e.target) e.target.value = '';
     }
   };
@@ -300,10 +324,8 @@ export default function CommunitySettingsPage() {
     const ok = window.confirm('Remove the current banner?');
     if (!ok) return;
 
-    // delete file (best-effort)
     await supabase.storage.from(BUCKET).remove([community.banner_path]).catch(() => {});
 
-    // clear DB fields
     const { data: updated, error } = await supabase
       .from('communities')
       .update({ banner_path: null, banner_alt: null, banner_updated_at: null } as any)
@@ -316,7 +338,6 @@ export default function CommunitySettingsPage() {
       return;
     }
 
-    // audit
     await supabase.from('community_mod_logs').insert([
       { community_id: community.id, actor_profile_id: userId, action: 'community.remove_banner', target_profile_id: null, reason: 'removed banner' } as any,
     ]);
@@ -324,6 +345,58 @@ export default function CommunitySettingsPage() {
     setCommunity(updated as Community);
     setBannerAlt('');
     setBannerUrl(null);
+  };
+
+  /** ===== Posting (single toggle): save ===== */
+  const postingDirty = useMemo(() => {
+    if (!community) return false;
+    return Boolean(requireMod) !== Boolean(community.require_mod_review);
+  }, [community, requireMod]);
+
+  const savePosting = async () => {
+    if (!community || !isOwner || !userId) return;
+
+    setSaving(true);
+    setMessage(null);
+
+    try {
+      const { data: updated, error } = await supabase
+        .from('communities')
+        .update({ require_mod_review: requireMod } as any)
+        .eq('id', community.id)
+        .select(
+          `
+          id, name, description, visibility, creator_id,
+          banner_path, banner_alt, banner_updated_at,
+          require_mod_review
+        `
+        )
+        .single();
+
+      if (error || !updated) throw error || new Error('Failed to save');
+
+      await supabase.from('community_mod_logs').insert([
+        {
+          community_id: community.id,
+          actor_profile_id: userId,
+          action: 'community.update_require_mod_review',
+          target_profile_id: null,
+          reason: `require_mod_review: ${String(requireMod)}`,
+        } as any,
+      ]);
+
+      setCommunity(updated as Community);
+      setMessage('Saved ✔️');
+    } catch (e: any) {
+      // Common causes: column missing (42703) or RLS forbids update
+      const msg =
+        e?.code === '42703'
+          ? 'Missing column require_mod_review on communities. Add it first.'
+          : e?.message || 'Failed to save.';
+      setMessage(msg);
+    } finally {
+      setSaving(false);
+    }
   };
 
   /** ===== UI ===== */
@@ -482,9 +555,35 @@ export default function CommunitySettingsPage() {
           </Section>
         )}
 
+        {/* POSTING (single toggle) */}
         {tab === 'posting' && (
           <Section title="Posting & Safety">
-            <p className="text-gray-600">Premod & rate limits coming later.</p>
+            <div className="sm:col-span-2 flex items-center justify-between rounded border p-3">
+              <div>
+                <div className="font-medium">Require moderator review before posts go live</div>
+                <div className="text-sm text-gray-600">If enabled, new posts enter a pending queue until approved.</div>
+              </div>
+              <label className="inline-flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4"
+                  checked={requireMod}
+                  onChange={(e) => setRequireMod(e.target.checked)}
+                />
+                <span className="text-sm">Enabled</span>
+              </label>
+            </div>
+
+            <div className="mt-4 flex items-center gap-3">
+              <button
+                onClick={savePosting}
+                disabled={!postingDirty || saving}
+                className={`px-4 py-2 rounded text-white ${!postingDirty || saving ? 'bg-gray-400' : 'bg-blue-600 hover:bg-blue-700'}`}
+              >
+                {saving ? 'Saving…' : 'Save settings'}
+              </button>
+              {message && <span className="text-sm text-gray-600">{message}</span>}
+            </div>
           </Section>
         )}
 

@@ -1,11 +1,12 @@
 'use client';
 
 import { useRouter, useParams } from 'next/navigation';
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
-import { Database } from '@/types/supabase';
+import type { Database } from '@/types/supabase';
 
 type PostInsert = Database['public']['Tables']['posts']['Insert'];
+type PostStatus = 'pending' | 'published' | 'rejected' | null;
 
 export default function CreatePostPage() {
   const router = useRouter();
@@ -24,6 +25,7 @@ export default function CreatePostPage() {
     e.preventDefault();
     setSubmitting(true);
 
+    // Auth
     const {
       data: { user },
       error: userErr,
@@ -42,19 +44,29 @@ export default function CreatePostPage() {
       user_id: user.id,
       community_id: communityId,
       has_live_chat: hasLiveChat,
-      // If chat is disabled, keep status null so UI can hide chat entirely.
       live_chat_status: hasLiveChat ? 'active' : null,
     } as PostInsert;
 
-    const { error } = await supabase.from('posts').insert(payload);
+    // Insert and read back the *actual* status decided by DB triggers/policies
+    const { data: inserted, error } = await supabase
+      .from('posts')
+      .insert(payload)
+      .select('id, status')
+      .single();
 
     setSubmitting(false);
 
-    if (error) {
-      console.error('Error creating post:', error.message);
+    if (error || !inserted) {
+      console.error('Error creating post:', error?.message);
       alert('Failed to create post');
       return;
     }
+
+    const newStatus = (inserted.status as PostStatus) ?? null;
+    if (newStatus === 'pending') {
+      alert('Your post was submitted and is awaiting moderator approval.');
+    }
+    // If published immediately, no moderation message.
 
     router.push(`/community/${communityId}`);
   };

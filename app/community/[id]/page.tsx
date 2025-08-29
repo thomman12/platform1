@@ -9,7 +9,7 @@ import type { Database } from '@/types/supabase';
 import { useFollowedStore } from '@/lib/followedStore';
 
 /* =========================
-   Local types (safe even if supabase.ts is behind)
+   Local types
 ========================= */
 type Visibility = 'public' | 'restricted' | 'private';
 
@@ -34,7 +34,7 @@ type PostWithAuthor = Database['public']['Tables']['posts']['Row'] & {
 type VoteCount = Record<string, { upvotes: number; downvotes: number }>;
 
 /* =========================
-   Preset avatar thumbs (your assets)
+   Avatar helper
 ========================= */
 const AVATAR_THUMBS: Record<string, string> = {
   a1: '/avatars/thumbs/a1-thumb.png',
@@ -98,22 +98,28 @@ export default function CommunityPage() {
   const [loading, setLoading] = useState(true);
 
   const [userId, setUserId] = useState<string | null>(null);
+  const [authReady, setAuthReady] = useState(false);
   const [profileId, setProfileId] = useState<string | null>(null);
   const [membership, setMembership] = useState<'approved' | 'pending' | 'banned' | 'none'>('none');
-  const [isOwner, setIsOwner] = useState(false);
-  const [role, setRole] = useState<'owner' | 'mod' | 'member' | null>(null);
+  const [role, setRole] = useState<'owner' | 'moderator' | 'member' | null>(null);
+
+  // Moderation queue count (pending posts)
+  const [pendingCount, setPendingCount] = useState<number | null>(null);
 
   // votes/saves
   const [voteCounts, setVoteCounts] = useState<VoteCount>({});
   const [savedPosts, setSavedPosts] = useState<Set<string>>(new Set());
   const [errorText, setErrorText] = useState<string | null>(null);
 
+  // Join button guard
+  const [joinBusy, setJoinBusy] = useState(false);
+
   // sidebar store (for instant updates)
   const { addFollowed, followed } = useFollowedStore();
 
   const BUCKET = 'community-banners';
 
-  /* who am I (optional login) */
+  /* ---- Auth bootstrap (resolve once) ---- */
   useEffect(() => {
     (async () => {
       const { data } = await supabase.auth.getUser();
@@ -128,17 +134,19 @@ export default function CommunityPage() {
           .maybeSingle();
         setProfileId(prof?.id ?? null);
       }
+      setAuthReady(true);
     })();
   }, [supabase]);
 
-  /* load community + membership meta first */
+  /* ---- Load community and my membership/role (after auth resolved) ---- */
   useEffect(() => {
-    if (!communityId) return;
+    if (!communityId || !authReady) return;
+
     (async () => {
       setLoading(true);
       setErrorText(null);
 
-      // community metadata (+ banner cols)
+      // Community metadata
       const { data: comm, error: ce } = await supabase
         .from('communities')
         .select('id, name, description, visibility, creator_id, banner_path, banner_alt, banner_updated_at')
@@ -153,9 +161,8 @@ export default function CommunityPage() {
       }
       const c = comm as unknown as Community;
       setCommunity(c);
-      setIsOwner(!!userId && c.creator_id === userId);
 
-      // my membership + role
+      // My membership + role (only if logged in)
       if (userId) {
         const { data: mem } = await supabase
           .from('community_members')
@@ -169,7 +176,7 @@ export default function CommunityPage() {
         else if (mem?.status === 'banned') setMembership('banned');
         else setMembership('none');
 
-        setRole((mem?.role as 'owner' | 'mod' | 'member') ?? null);
+        setRole((mem?.role as 'owner' | 'moderator' | 'member') ?? null);
       } else {
         setMembership('none');
         setRole(null);
@@ -177,11 +184,16 @@ export default function CommunityPage() {
 
       setLoading(false);
     })();
-  }, [communityId, supabase, userId]);
+  }, [communityId, supabase, userId, authReady]);
 
-  const isAdmin = isOwner || role === 'mod';
+  /* ---- Derived perms (owner computed, not stored) ---- */
+  const isOwner = useMemo(
+    () => !!userId && !!community && community.creator_id === userId,
+    [userId, community]
+  );
+  const isAdmin = isOwner || role === 'moderator';
 
-  /* derive banner URL with cache-bust */
+  /* ---- Banner URL with cache-bust ---- */
   const bannerUrl = useMemo(() => {
     if (!community?.banner_path) return null;
     const { data } = supabase.storage.from(BUCKET).getPublicUrl(community.banner_path);
@@ -189,16 +201,19 @@ export default function CommunityPage() {
     return data.publicUrl ? data.publicUrl + bust : null;
   }, [community?.banner_path, community?.banner_updated_at, supabase]);
 
-  /* permissions derived from meta */
+  /* ---- Permissions ---- */
   const canSeePosts = useMemo(() => {
     if (!community) return false;
-    if (community.visibility === 'public') return true; // anyone
-    return membership === 'approved'; // restricted/private
-  }, [community, membership]);
+    if (community.visibility === 'public') return true;
+    return isOwner || membership === 'approved';
+  }, [community, membership, isOwner]);
 
-  const canCreatePost = useMemo(() => membership === 'approved', [membership]);
+  const canCreatePost = useMemo(
+    () => isOwner || membership === 'approved',
+    [isOwner, membership]
+  );
 
-  /* load posts only if allowed */
+  /* ---- Load posts (respect moderation for non-admins) ---- */
   useEffect(() => {
     if (!community || !canSeePosts) {
       setPosts([]);
@@ -206,16 +221,22 @@ export default function CommunityPage() {
     }
     (async () => {
       try {
-        const { data } = await supabase
+        let q = supabase
           .from('posts')
           .select(`
             id, title, content, visibility, created_at, user_id, community_id,
+            status, approved_by, approved_at, mod_notes,
             has_live_chat, live_chat_status, audio_room_active,
             profiles:profiles!user_id (username, avatar_id)
           `)
           .eq('community_id', community.id)
-          .order('created_at', { ascending: false })
-          .throwOnError();
+          .order('created_at', { ascending: false });
+
+        if (!isAdmin) {
+          q = q.eq('status', 'published');
+        }
+
+        const { data } = await q.throwOnError();
 
         const normalized: PostWithAuthor[] = (data ?? []).map((row: any) => ({
           ...row,
@@ -228,9 +249,9 @@ export default function CommunityPage() {
         setErrorText(e?.message || 'Failed to load posts.');
       }
     })();
-  }, [community, canSeePosts, supabase]);
+  }, [community, canSeePosts, supabase, isAdmin]);
 
-  /* realtime (only when visible) */
+  /* ---- Realtime reflect status/chat changes ---- */
   useEffect(() => {
     if (!community || !canSeePosts) return;
 
@@ -251,6 +272,7 @@ export default function CommunityPage() {
                     has_live_chat: (updated.has_live_chat as boolean | null) ?? p.has_live_chat,
                     audio_room_active:
                       (updated.audio_room_active as boolean | null) ?? p.audio_room_active,
+                    status: (updated as any).status ?? (p as any).status,
                   }
                 : p
             )
@@ -264,7 +286,7 @@ export default function CommunityPage() {
     };
   }, [community, canSeePosts, supabase]);
 
-  /* saved posts (when logged in & posts exist) */
+  /* ---- Saved posts (if logged in) ---- */
   useEffect(() => {
     if (!profileId || posts.length === 0) return;
     (async () => {
@@ -281,7 +303,7 @@ export default function CommunityPage() {
     })();
   }, [profileId, posts.length, supabase]);
 
-  /* vote counts */
+  /* ---- Votes ---- */
   useEffect(() => {
     (async () => {
       if (posts.length === 0) {
@@ -309,30 +331,70 @@ export default function CommunityPage() {
     })();
   }, [posts, supabase]);
 
-  /* ---- actions: join/request, vote, save ---- */
+  /* ---- Moderation: pending count + realtime ---- */
+  const loadPendingCount = async () => {
+    if (!community || !isAdmin) {
+      setPendingCount(null);
+      return;
+    }
+    const { count, error } = await supabase
+      .from('posts')
+      .select('id', { count: 'exact', head: true })
+      .eq('community_id', community.id)
+      .eq('status', 'pending' as any);
+
+    if (!error) setPendingCount(count ?? 0);
+  };
+
+  useEffect(() => {
+    loadPendingCount();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [community?.id, isAdmin]);
+
+  useEffect(() => {
+    if (!community || !isAdmin) return;
+
+    const ch = supabase
+      .channel(`mod-count-${community.id}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'posts', filter: `community_id=eq.${community.id}` },
+        () => loadPendingCount()
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(ch);
+    };
+  }, [community?.id, isAdmin, supabase]);
+
+  /* ---- Actions: join/request (via RPC), vote, save ---- */
   const handleJoin = async () => {
-    if (!community) return;
-    if (!userId) {
-      router.push('/login');
-      return;
-    }
-    const targetStatus = community.visibility === 'public' ? 'approved' : 'pending';
-    const { error: me } = await supabase.from('community_members').insert([
-      {
-        community_id: community.id,
-        profile_id: userId,
-        status: targetStatus,
-      } as any,
-    ]);
-    if (me) {
-      console.error('Join/Request error:', me.message);
+  if (!community || joinBusy) return;
+  if (!userId) { router.push('/login'); return; }
+  if (isOwner) return; // owners don't join
+
+  setJoinBusy(true);
+  try {
+    const { data, error } = await supabase.rpc('join_community', {
+      p_community: community.id,
+    });
+
+    if (error) {
+      console.error('Join failed:', error.message);
+      alert(`Join failed: ${error.message}`);
       return;
     }
 
-    setMembership(targetStatus as any);
+    const status = (data as any)?.status as
+      | 'approved'
+      | 'pending'
+      | 'banned'
+      | undefined;
 
-    // Sidebar: optimistic add for public joins
-    if (targetStatus === 'approved') {
+    if (status) setMembership(status);
+
+    if (status === 'approved') {
       if (!followed.find((c) => c.id === community.id)) {
         addFollowed({
           id: community.id,
@@ -340,8 +402,16 @@ export default function CommunityPage() {
           description: community.description ?? '',
         });
       }
+    } else if (status === 'pending') {
+      alert('Join request sent ✅');
+    } else if (status === 'banned') {
+      alert('You are banned from this community.');
     }
-  };
+  } finally {
+    setJoinBusy(false);
+  }
+};
+
 
   const handleVote = async (postId: string, type: 'upvote' | 'downvote') => {
     if (!profileId) return alert('Please login to vote.');
@@ -396,33 +466,19 @@ export default function CommunityPage() {
     }
   };
 
-  /* ✅ Auto-add to sidebar when membership flips to approved (restricted/private approval) */
-  useEffect(() => {
-    if (!community) return;
-    if (membership === 'approved') {
-      if (!followed.find((c) => c.id === community.id)) {
-        addFollowed({
-          id: community.id,
-          name: community.name,
-          description: community.description ?? '',
-        });
-      }
-    }
-  }, [membership, community, followed, addFollowed]);
-
-  /* helpers */
+  /* ---- Helpers ---- */
   const joinLabel = useMemo(() => {
     if (membership === 'approved') return 'Joined';
     if (membership === 'pending') return 'Pending';
     return community?.visibility === 'public' ? 'Join' : 'Request';
   }, [membership, community]);
 
-  const canClickJoin = membership === 'none';
+  const canClickJoin = !isOwner && membership === 'none';
   const preview = (t?: string | null, n = 180) =>
     (t ?? '').length > n ? (t ?? '').slice(0, n) + '…' : (t ?? '');
 
-  /* UI states */
-  if (loading) return <p className="p-4">Loading…</p>;
+  /* ---- UI states ---- */
+  if (loading || !authReady) return <p className="p-4">Loading…</p>;
   if (errorText) {
     return (
       <div className="p-6">
@@ -437,7 +493,6 @@ export default function CommunityPage() {
     <div className="p-0 sm:p-6 max-w-5xl mx-auto">
       {/* HERO BANNER */}
       <div className="relative mb-4 sm:mb-6 overflow-hidden rounded-none sm:rounded-lg border bg-gray-100">
-        {/* Banner or fallback */}
         {bannerUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
@@ -449,7 +504,7 @@ export default function CommunityPage() {
           <div className="w-full h-40 sm:h-56 md:h-72 bg-gradient-to-r from-slate-200 to-slate-300" />
         )}
 
-        {/* Gradient overlay for readability */}
+        {/* Gradient overlay */}
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/60 via-black/20 to-transparent" />
 
         {/* Bottom content overlay */}
@@ -469,16 +524,36 @@ export default function CommunityPage() {
 
             {/* Action buttons */}
             <div className="flex items-center gap-2">
-              <button
-                disabled={!canClickJoin}
-                onClick={handleJoin}
-                className={`px-4 py-2 rounded text-white ${
-                  canClickJoin ? 'bg-blue-600 hover:bg-blue-700' : 'bg-white/30 text-white/80 cursor-default'
-                }`}
-                title={!canClickJoin ? 'Already joined or pending' : undefined}
-              >
-                {joinLabel}
-              </button>
+              {/* Only show Join/Request to non-owners */}
+              {!isOwner && (
+                <button
+                  disabled={!canClickJoin || joinBusy}
+                  onClick={handleJoin}
+                  className={`px-4 py-2 rounded text-white ${
+                    !canClickJoin || joinBusy
+                      ? 'bg-white/30 text-white/80 cursor-default'
+                      : 'bg-blue-600 hover:bg-blue-700'
+                  }`}
+                  title={!canClickJoin ? 'Already joined or pending' : undefined}
+                >
+                  {joinBusy ? '…' : joinLabel}
+                </button>
+              )}
+
+              {/* Moderate (N) chip for owner/moderator */}
+              {isAdmin && (
+                <Link
+                  href={`/community/${community.id}/admin/moderation`}
+                  className={`px-4 py-2 rounded ${
+                    (pendingCount ?? 0) > 0
+                      ? 'bg-amber-600 text-white hover:bg-amber-700'
+                      : 'bg-black/70 text-white hover:bg-black/80'
+                  }`}
+                  title="Moderation queue"
+                >
+                  🧹 Moderate{typeof pendingCount === 'number' ? ` (${pendingCount})` : ''}
+                </Link>
+              )}
 
               {/* Admin/Settings */}
               {isAdmin && (
@@ -506,7 +581,7 @@ export default function CommunityPage() {
 
       {/* Posts / content area */}
       <div className="px-4 sm:px-0">
-        {/* Create Post (approved members only) */}
+        {/* Create Post (approved members only, owner included) */}
         {canCreatePost && (
           <div className="flex justify-end mb-4">
             <Link
@@ -545,7 +620,22 @@ export default function CommunityPage() {
                 return (
                   <li key={post.id} className="border p-4 rounded shadow-sm bg-white">
                     <Link href={`/post/${post.id}`} className="block group">
-                      <h3 className="text-lg font-semibold group-hover:underline">{post.title}</h3>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-lg font-semibold group-hover:underline">{post.title}</h3>
+                        {/* Admin-only moderation badge when not published */}
+                        {isAdmin && (post as any).status && (post as any).status !== 'published' && (
+                          <span
+                            className={`text-xs px-2 py-0.5 rounded ${
+                              (post as any).status === 'pending'
+                                ? 'bg-amber-100 text-amber-800'
+                                : 'bg-rose-100 text-rose-800'
+                            }`}
+                            title={`Status: ${(post as any).status}`}
+                          >
+                            {(post as any).status}
+                          </span>
+                        )}
+                      </div>
                     </Link>
 
                     <div className="flex items-center gap-2 text-sm text-gray-500 mb-2">
@@ -563,9 +653,7 @@ export default function CommunityPage() {
                       <span>· {post.created_at ? new Date(post.created_at).toLocaleString() : ''}</span>
                     </div>
 
-                    <p className="text-gray-700">
-                      {preview(post.content)}
-                    </p>
+                    <p className="text-gray-700">{preview(post.content)}</p>
 
                     <div className="mt-3 flex items-center space-x-4 text-sm">
                       <button onClick={() => handleVote(post.id, 'upvote')}>🔼</button>
