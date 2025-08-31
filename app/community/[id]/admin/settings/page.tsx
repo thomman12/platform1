@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import type { Database } from '@/types/supabase';
@@ -19,8 +19,20 @@ type Community = {
   banner_alt?: string | null;
   banner_updated_at?: string | null;
 
-  /** New moderation toggle */
+  /** Toggles */
   require_mod_review?: boolean | null;
+  is_hidden?: boolean | null;   // Privacy tab (hide from explore/search)
+  is_archived?: boolean | null; // Danger Zone (read-only mode)
+};
+
+type MemberRow = {
+  profile_id: string;
+  username: string | null;
+  avatar_id: string | null;
+  role: 'owner' | 'moderator' | 'member';
+  status: 'approved' | 'pending' | 'banned';
+  created_at: string | null;         // your table column
+  status_changed_at: string | null;  // your table column
 };
 
 type TabKey = 'general' | 'branding' | 'posting' | 'privacy' | 'roles' | 'danger';
@@ -28,6 +40,7 @@ type TabKey = 'general' | 'branding' | 'posting' | 'privacy' | 'roles' | 'danger
 export default function CommunitySettingsPage() {
   const supabase = createClientComponentClient<Database>();
   const params = useParams();
+  const router = useRouter();
   const communityId = (params.id as string) ?? '';
 
   const [loading, setLoading] = useState(true);
@@ -54,6 +67,23 @@ export default function CommunitySettingsPage() {
   /** ===== Posting (single toggle) ===== */
   const [requireMod, setRequireMod] = useState(false);
 
+  /** ===== Privacy (single toggle) ===== */
+  const [hidden, setHidden] = useState(false);
+
+  /** ===== Roles tab state ===== */
+  const [members, setMembers] = useState<MemberRow[]>([]);
+  const [rolesBusy, setRolesBusy] = useState(false);
+  const [rolesMsg, setRolesMsg] = useState<string | null>(null);
+  const [memberFilter, setMemberFilter] = useState<'approved' | 'pending' | 'banned'>('approved');
+  const [memberSearch, setMemberSearch] = useState('');
+
+  /** ===== Danger Zone state ===== */
+  const [archived, setArchived] = useState(false);
+  const [dzMsg, setDzMsg] = useState<string | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [confirmText, setConfirmText] = useState('');
+  const [ack, setAck] = useState(false);
+
   const BUCKET = 'community-banners';
 
   useEffect(() => {
@@ -63,16 +93,16 @@ export default function CommunitySettingsPage() {
       const uid = auth?.user?.id ?? null;
       setUserId(uid);
 
-      // load community (+ banner + moderation flag)
-      // If the require_mod_review column doesn't exist, Supabase will throw;
-      // we fall back to a basic select.
+      // load community (+ banner + moderation flag + hidden + archived)
       const fetchFull = await supabase
         .from('communities')
         .select(
           `
           id, name, description, visibility, creator_id,
           banner_path, banner_alt, banner_updated_at,
-          require_mod_review
+          require_mod_review,
+          is_hidden,
+          is_archived
         `
         )
         .eq('id', communityId)
@@ -81,7 +111,7 @@ export default function CommunitySettingsPage() {
       let c: Community | null = null;
 
       if (fetchFull.error) {
-        // Fallback if the new column isn't present yet
+        // Fallback if columns aren’t present yet
         const { data: commBasic } = await supabase
           .from('communities')
           .select('id, name, description, visibility, creator_id, banner_path, banner_alt, banner_updated_at')
@@ -120,6 +150,12 @@ export default function CommunitySettingsPage() {
       // Prime Posting
       setRequireMod(Boolean(c.require_mod_review));
 
+      // Prime Privacy
+      setHidden(Boolean(c.is_hidden));
+
+      // Prime Danger Zone
+      setArchived(Boolean(c.is_archived));
+
       setLoading(false);
     })();
   }, [communityId, supabase]);
@@ -157,7 +193,7 @@ export default function CommunitySettingsPage() {
           ? 'Make this community PUBLIC? Posts may be visible to everyone.'
           : visibility === 'restricted'
           ? 'Make this community RESTRICTED? Posts visible to members; join requests require approval.'
-          : 'Make this community PRIVATE? Only approved members can see posts and the community will not be indexed.';
+          : 'Make this community PRIVATE? Only approved members can see posts.';
       if (!window.confirm(text)) return;
     }
 
@@ -173,7 +209,7 @@ export default function CommunitySettingsPage() {
       } as any)
       .eq('id', community.id)
       .select(
-        'id, name, description, visibility, creator_id, banner_path, banner_alt, banner_updated_at'
+        'id, name, description, visibility, creator_id, banner_path, banner_alt, banner_updated_at, require_mod_review, is_hidden, is_archived'
       )
       .single();
 
@@ -278,7 +314,7 @@ export default function CommunitySettingsPage() {
           banner_updated_at: nowIso,
         } as any)
         .eq('id', community.id)
-        .select('id, name, description, visibility, creator_id, banner_path, banner_alt, banner_updated_at')
+        .select('id, name, description, visibility, creator_id, banner_path, banner_alt, banner_updated_at, require_mod_review, is_hidden, is_archived')
         .single();
 
       if (dbErr || !updated) {
@@ -330,7 +366,7 @@ export default function CommunitySettingsPage() {
       .from('communities')
       .update({ banner_path: null, banner_alt: null, banner_updated_at: null } as any)
       .eq('id', community.id)
-      .select('id, name, description, visibility, creator_id, banner_path, banner_alt, banner_updated_at')
+      .select('id, name, description, visibility, creator_id, banner_path, banner_alt, banner_updated_at, require_mod_review, is_hidden, is_archived')
       .single();
 
     if (error || !updated) {
@@ -368,7 +404,9 @@ export default function CommunitySettingsPage() {
           `
           id, name, description, visibility, creator_id,
           banner_path, banner_alt, banner_updated_at,
-          require_mod_review
+          require_mod_review,
+          is_hidden,
+          is_archived
         `
         )
         .single();
@@ -388,7 +426,6 @@ export default function CommunitySettingsPage() {
       setCommunity(updated as Community);
       setMessage('Saved ✔️');
     } catch (e: any) {
-      // Common causes: column missing (42703) or RLS forbids update
       const msg =
         e?.code === '42703'
           ? 'Missing column require_mod_review on communities. Add it first.'
@@ -396,6 +433,285 @@ export default function CommunitySettingsPage() {
       setMessage(msg);
     } finally {
       setSaving(false);
+    }
+  };
+
+  /** ===== Privacy: dirty + save ===== */
+  const privacyDirty = useMemo(() => {
+    if (!community) return false;
+    return Boolean(hidden) !== Boolean(community.is_hidden);
+  }, [community, hidden]);
+
+  const savePrivacy = async () => {
+    if (!community || !isOwner || !userId) return;
+
+    setSaving(true);
+    setMessage(null);
+
+    try {
+      const { data: updated, error } = await supabase
+        .from('communities')
+        .update({ is_hidden: hidden } as any)
+        .eq('id', community.id)
+        .select(
+          `
+          id, name, description, visibility, creator_id,
+          banner_path, banner_alt, banner_updated_at,
+          require_mod_review,
+          is_hidden,
+          is_archived
+        `
+        )
+        .single();
+
+      if (error || !updated) throw error || new Error('Failed to save');
+
+      await supabase.from('community_mod_logs').insert([
+        {
+          community_id: community.id,
+          actor_profile_id: userId,
+          action: 'community.update_hidden',
+          target_profile_id: null,
+          reason: `is_hidden: ${String(hidden)}`,
+        } as any,
+      ]);
+
+      setCommunity(updated as Community);
+      setMessage('Saved ✔️');
+    } catch (e: any) {
+      setMessage(e?.message || 'Failed to save.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  /** ========================
+   * Roles: load + actions
+   * ====================== */
+  const loadMembers = async () => {
+    if (!community) return;
+    setRolesBusy(true);
+    setRolesMsg(null);
+    try {
+      const { data, error } = await supabase
+        .from('community_members')
+        .select(`
+          profile_id, role, status, created_at, status_changed_at,
+          profiles:profiles!profile_id (username, avatar_id)
+        `)
+        .eq('community_id', community.id)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+
+      const rows: MemberRow[] = (data ?? []).map((r: any) => ({
+        profile_id: r.profile_id,
+        role: r.role,
+        status: r.status,
+        created_at: r.created_at,
+        status_changed_at: r.status_changed_at,
+        username: Array.isArray(r.profiles) ? r.profiles[0]?.username ?? null : r.profiles?.username ?? null,
+        avatar_id: Array.isArray(r.profiles) ? r.profiles[0]?.avatar_id ?? null : r.profiles?.avatar_id ?? null,
+      }));
+
+      setMembers(rows);
+    } catch (e: any) {
+      setRolesMsg(e?.message || 'Failed to load members.');
+    } finally {
+      setRolesBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (tab === 'roles') loadMembers();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, community?.id]);
+
+  const actLog = async (action: string, target_profile_id: string, reasonText: string) => {
+    if (!community || !userId) return;
+    await supabase.from('community_mod_logs').insert([
+      {
+        community_id: community.id,
+        actor_profile_id: userId,
+        action,
+        target_profile_id,
+        reason: reasonText,
+      } as any,
+    ]);
+  };
+
+  const setStatus = async (profileId: string, status: 'approved' | 'pending' | 'banned') => {
+    if (!community) return;
+    setRolesBusy(true);
+    try {
+      const { error } = await supabase
+        .from('community_members')
+        .update({ status, status_changed_at: new Date().toISOString() })
+        .eq('community_id', community.id)
+        .eq('profile_id', profileId);
+
+      if (error) throw error;
+
+      await actLog('community.member_set_status', profileId, `status → ${status}`);
+      await loadMembers();
+      setRolesMsg('Saved ✔️');
+    } catch (e: any) {
+      setRolesMsg(e?.message || 'Failed.');
+    } finally {
+      setRolesBusy(false);
+    }
+  };
+
+  const removeMember = async (profileId: string) => {
+    if (!community) return;
+    if (!window.confirm('Remove this member from the community?')) return;
+    setRolesBusy(true);
+    try {
+      const { error } = await supabase
+        .from('community_members')
+        .delete()
+        .eq('community_id', community.id)
+        .eq('profile_id', profileId);
+
+      if (error) throw error;
+
+      await actLog('community.member_removed', profileId, 'removed from community');
+      await loadMembers();
+      setRolesMsg('Removed ✔️');
+    } catch (e: any) {
+      setRolesMsg(e?.message || 'Failed.');
+    } finally {
+      setRolesBusy(false);
+    }
+  };
+
+  const setRole = async (profileId: string, nextRole: 'member' | 'moderator' | 'owner') => {
+    if (!community) return;
+    if (nextRole === 'owner') return transferOwnership(profileId);
+
+    setRolesBusy(true);
+    try {
+      const { error } = await supabase
+        .from('community_members')
+        .update({ role: nextRole })
+        .eq('community_id', community.id)
+        .eq('profile_id', profileId);
+
+      if (error) throw error;
+
+      await actLog('community.member_set_role', profileId, `role → ${nextRole}`);
+      await loadMembers();
+      setRolesMsg('Saved ✔️');
+    } catch (e: any) {
+      setRolesMsg(e?.message || 'Failed.');
+    } finally {
+      setRolesBusy(false);
+    }
+  };
+
+  const transferOwnership = async (newOwnerProfileId: string) => {
+    if (!community || !userId) return;
+    const ok = window.confirm('Transfer ownership to this user? You will become a moderator.');
+    if (!ok) return;
+
+    setRolesBusy(true);
+    setRolesMsg(null);
+    try {
+      // 1) Ensure new owner is approved member
+      const target = members.find((m) => m.profile_id === newOwnerProfileId);
+      if (!target || target.status !== 'approved') {
+        throw new Error('New owner must be an approved member.');
+      }
+
+      // 2) Update communities.creator_id
+      const { error: up1 } = await supabase
+        .from('communities')
+        .update({ creator_id: newOwnerProfileId } as any)
+        .eq('id', community.id);
+      if (up1) throw up1;
+
+      // 3) Set roles: new → owner, current owner → moderator
+      await supabase
+        .from('community_members')
+        .upsert([{ community_id: community.id, profile_id: newOwnerProfileId, role: 'owner', status: 'approved' } as any], { onConflict: 'community_id,profile_id' });
+
+      await supabase
+        .from('community_members')
+        .update({ role: 'moderator' } as any)
+        .eq('community_id', community.id)
+        .eq('profile_id', userId);
+
+      await actLog('community.transfer_ownership', newOwnerProfileId, 'owner → new profile');
+
+      // reflect locally
+      setCommunity({ ...community, creator_id: newOwnerProfileId });
+      setIsOwner(false);
+      await loadMembers();
+      setRolesMsg('Ownership transferred ✔️');
+    } catch (e: any) {
+      setRolesMsg(e?.message || 'Failed to transfer ownership.');
+    } finally {
+      setRolesBusy(false);
+    }
+  };
+
+  /** ===== Danger Zone: archive/unarchive ===== */
+  const archiveDirty = useMemo(() => {
+    if (!community) return false;
+    return Boolean(archived) !== Boolean(community.is_archived);
+  }, [community, archived]);
+
+  const saveArchive = async () => {
+    if (!community || !isOwner || !userId) return;
+    const txt = archived
+      ? 'Archive this community? Members won’t be able to post or join until unarchived.'
+      : 'Unarchive this community and restore posting?';
+    if (!window.confirm(txt)) return;
+
+    setSaving(true);
+    setDzMsg(null);
+    try {
+      const { data: updated, error } = await supabase
+        .from('communities')
+        .update({ is_archived: archived } as any)
+        .eq('id', community.id)
+        .select('id, name, description, visibility, creator_id, banner_path, banner_alt, banner_updated_at, require_mod_review, is_hidden, is_archived')
+        .single();
+
+      if (error || !updated) throw error || new Error('Failed to save');
+
+      await supabase.from('community_mod_logs' as any).insert([
+        { community_id: community.id, actor_profile_id: userId, action: 'community.update_is_archived', target_profile_id: null, reason: `is_archived: ${String(archived)}` } as any,
+      ]);
+
+      setCommunity(updated as Community);
+      setDzMsg('Saved ✔️');
+    } catch (e: any) {
+      setDzMsg(e?.message || 'Failed to save.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  /** ===== Danger Zone: hard delete ===== */
+  const canDelete = isOwner && ack && confirmText.trim() === (community?.name ?? '');
+
+  const deleteCommunity = async () => {
+    if (!community || !isOwner) return;
+    const really = window.prompt(`Type DELETE to permanently remove "${community.name}". This cannot be undone.`);
+    if (!really || really.toUpperCase() !== 'DELETE') return;
+
+    setDeleteBusy(true);
+    setDzMsg(null);
+    try {
+      const { error } = await supabase.rpc('delete_community_hard', { p_community: community.id });
+      if (error) throw error;
+      setDzMsg('Community deleted.');
+      router.push('/home');
+    } catch (e: any) {
+      setDzMsg(e?.message || 'Failed to delete.');
+    } finally {
+      setDeleteBusy(false);
     }
   };
 
@@ -587,21 +903,226 @@ export default function CommunitySettingsPage() {
           </Section>
         )}
 
+        {/* PRIVACY (single toggle) */}
         {tab === 'privacy' && (
           <Section title="Privacy & Indexing">
-            <p className="text-gray-600">Indexing control to follow. Private stays non-indexable.</p>
+            <div className="sm:col-span-2 flex items-center justify-between rounded border p-3">
+              <div>
+                <div className="font-medium">Hide this community</div>
+                <div className="text-sm text-gray-600">
+                  When hidden, the community won’t appear in Explore/search. Direct links still work.
+                </div>
+              </div>
+              <label className="inline-flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4"
+                  checked={hidden}
+                  onChange={(e) => setHidden(e.target.checked)}
+                />
+                <span className="text-sm">{hidden ? 'Hidden' : 'Visible'}</span>
+              </label>
+            </div>
+
+            <div className="mt-4 flex items-center gap-3">
+              <button
+                onClick={savePrivacy}
+                disabled={!privacyDirty || saving}
+                className={`px-4 py-2 rounded text-white ${!privacyDirty || saving ? 'bg-gray-400' : 'bg-blue-600 hover:bg-blue-700'}`}
+              >
+                {saving ? 'Saving…' : 'Save settings'}
+              </button>
+              {message && <span className="text-sm text-gray-600">{message}</span>}
+            </div>
           </Section>
         )}
 
+        {/* ROLES */}
         {tab === 'roles' && (
           <Section title="Roles">
-            <p className="text-gray-600">Role management and ownership transfer coming later.</p>
+            <div className="flex flex-col gap-3">
+              <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <label className="text-sm text-gray-600">Filter</label>
+                  <select
+                    className="border rounded px-2 py-1 text-sm"
+                    value={memberFilter}
+                    onChange={(e) => setMemberFilter(e.target.value as any)}
+                  >
+                    <option value="approved">Approved</option>
+                    <option value="pending">Pending</option>
+                    <option value="banned">Banned</option>
+                  </select>
+                </div>
+                <input
+                  placeholder="Search username…"
+                  value={memberSearch}
+                  onChange={(e) => setMemberSearch(e.target.value)}
+                  className="border rounded px-3 py-2 w-full sm:w-64"
+                />
+              </div>
+
+              <div className="rounded border overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50 text-gray-600">
+                    <tr>
+                      <th className="text-left px-3 py-2">User</th>
+                      <th className="text-left px-3 py-2">Role</th>
+                      <th className="text-left px-3 py-2">Status</th>
+                      <th className="text-left px-3 py-2">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {members
+                      .filter((m) => m.status === memberFilter)
+                      .filter((m) => (memberSearch ? (m.username ?? '').toLowerCase().includes(memberSearch.toLowerCase()) : true))
+                      .map((m) => (
+                        <tr key={m.profile_id} className="border-t">
+                          <td className="px-3 py-2">
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium">{m.username ?? 'Unknown'}</span>
+                              {m.profile_id === community.creator_id && (
+                                <span className="text-[10px] uppercase px-2 py-0.5 rounded bg-blue-100 text-blue-700">owner</span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-3 py-2">
+                            <select
+                              className="border rounded px-2 py-1 text-sm"
+                              value={m.role}
+                              onChange={(e) => setRole(m.profile_id, e.target.value as any)}
+                              disabled={m.profile_id === community.creator_id || rolesBusy}
+                              title={m.profile_id === community.creator_id ? 'Owner role cannot be edited here. Use Transfer Ownership.' : undefined}
+                            >
+                              <option value="member">member</option>
+                              <option value="moderator">moderator</option>
+                              <option value="owner">owner (transfer)</option>
+                            </select>
+                          </td>
+                          <td className="px-3 py-2 capitalize">{m.status}</td>
+                          <td className="px-3 py-2">
+                            {m.status === 'pending' && (
+                              <button
+                                onClick={() => setStatus(m.profile_id, 'approved')}
+                                className="px-2 py-1 rounded bg-green-600 text-white hover:bg-green-700 mr-2"
+                                disabled={rolesBusy}
+                              >
+                                Approve
+                              </button>
+                            )}
+                            {m.status !== 'banned' ? (
+                              <button
+                                onClick={() => setStatus(m.profile_id, 'banned')}
+                                className="px-2 py-1 rounded bg-rose-600 text-white hover:bg-rose-700 mr-2"
+                                disabled={rolesBusy}
+                              >
+                                Ban
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => setStatus(m.profile_id, 'approved')}
+                                className="px-2 py-1 rounded bg-amber-600 text-white hover:bg-amber-700 mr-2"
+                                disabled={rolesBusy}
+                              >
+                                Unban
+                              </button>
+                            )}
+                            <button
+                              onClick={() => removeMember(m.profile_id)}
+                              className="px-2 py-1 rounded border hover:bg-gray-50"
+                              disabled={rolesBusy || m.profile_id === community.creator_id}
+                              title={m.profile_id === community.creator_id ? 'Owner cannot be removed.' : undefined}
+                            >
+                              Remove
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    {members.filter((m) => m.status === memberFilter && (memberSearch ? (m.username ?? '').toLowerCase().includes(memberSearch.toLowerCase()) : true)).length === 0 && (
+                      <tr>
+                        <td className="px-3 py-4 text-gray-500" colSpan={4}>
+                          No members found.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {rolesMsg && <div className="text-sm text-gray-600">{rolesMsg}</div>}
+
+              {/* Transfer ownership quick action */}
+              <div className="rounded border p-3">
+                <div className="font-medium mb-2">Transfer Ownership</div>
+                <p className="text-sm text-gray-600 mb-3">
+                  Transfer ownership to an <b>approved</b> member or moderator. You will become a moderator.
+                </p>
+                <TransferOwnershipInline
+                  members={members.filter((m) => m.status === 'approved' && m.profile_id !== community.creator_id)}
+                  onTransfer={transferOwnership}
+                  busy={rolesBusy}
+                />
+              </div>
+            </div>
           </Section>
         )}
 
+        {/* DANGER ZONE */}
         {tab === 'danger' && (
           <Section title="Danger Zone">
-            <p className="text-gray-600">Archive/delete with safeguards will be added later.</p>
+            {/* Archive card */}
+            <div className="rounded border p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="font-medium">Archive this community</div>
+                  <div className="text-sm text-gray-600">
+                    When archived, members can’t post or join. You can unarchive later.
+                  </div>
+                </div>
+                <label className="inline-flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" className="h-4 w-4" checked={archived} onChange={(e) => setArchived(e.target.checked)} />
+                  <span className="text-sm">{archived ? 'Archived' : 'Active'}</span>
+                </label>
+              </div>
+              <div className="mt-3">
+                <button onClick={saveArchive} disabled={!archiveDirty || saving} className={`px-4 py-2 rounded text-white ${!archiveDirty || saving ? 'bg-gray-400' : 'bg-blue-600 hover:bg-blue-700'}`}>
+                  {saving ? 'Saving…' : 'Save archive state'}
+                </button>
+                {dzMsg && <span className="ml-3 text-sm text-gray-600">{dzMsg}</span>}
+              </div>
+            </div>
+
+            {/* Delete card */}
+            <div className="rounded border p-4 mt-5">
+              <div className="font-medium text-red-700">Delete community (permanent)</div>
+              <p className="text-sm text-gray-600 mt-1">
+                This will permanently remove the community, its posts, votes, saved posts, members, and audit logs. This cannot be undone.
+              </p>
+
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <div className="sm:col-span-2">
+                  <label className="text-sm text-gray-600 block mb-1">
+                    Type the community name to confirm ({community.name})
+                  </label>
+                  <input value={confirmText} onChange={(e) => setConfirmText(e.target.value)} className="border rounded px-3 py-2 w-full" />
+                </div>
+                <label className="inline-flex items-center gap-2 sm:col-span-2">
+                  <input type="checkbox" className="h-4 w-4" checked={ack} onChange={(e) => setAck(e.target.checked)} />
+                  <span className="text-sm">I understand this action is permanent.</span>
+                </label>
+              </div>
+
+              <div className="mt-3 flex items-center gap-3">
+                <button
+                  onClick={deleteCommunity}
+                  disabled={!canDelete || deleteBusy}
+                  className={`px-4 py-2 rounded text-white ${!canDelete || deleteBusy ? 'bg-red-300' : 'bg-red-600 hover:bg-red-700'}`}
+                >
+                  {deleteBusy ? 'Deleting…' : 'Delete community'}
+                </button>
+                {dzMsg && <span className="text-sm text-gray-600">{dzMsg}</span>}
+              </div>
+            </div>
           </Section>
         )}
       </div>
@@ -616,5 +1137,41 @@ function Section({ title, children }: { title: string; children: React.ReactNode
       <h2 className="text-lg font-semibold">{title}</h2>
       <div className="mt-4">{children}</div>
     </section>
+  );
+}
+
+/** Small inline transfer widget */
+function TransferOwnershipInline({
+  members,
+  onTransfer,
+  busy,
+}: {
+  members: MemberRow[];
+  onTransfer: (profileId: string) => void;
+  busy: boolean;
+}) {
+  const [pick, setPick] = useState<string>('');
+  return (
+    <div className="flex items-center gap-2">
+      <select
+        className="border rounded px-2 py-2"
+        value={pick}
+        onChange={(e) => setPick(e.target.value)}
+      >
+        <option value="">Select member…</option>
+        {members.map((m) => (
+          <option key={m.profile_id} value={m.profile_id}>
+            {m.username ?? m.profile_id} · {m.role}
+          </option>
+        ))}
+      </select>
+      <button
+        onClick={() => pick && onTransfer(pick)}
+        className={`px-3 py-2 rounded text-white ${pick && !busy ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-400'}`}
+        disabled={!pick || busy}
+      >
+        Transfer
+      </button>
+    </div>
   );
 }

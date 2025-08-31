@@ -22,6 +22,8 @@ type Community = {
   banner_path?: string | null;
   banner_alt?: string | null;
   banner_updated_at?: string | null;
+  /** NEW: hidden from Explore/search */
+  is_hidden?: boolean | null;
 };
 
 type PostWithAuthor = Database['public']['Tables']['posts']['Row'] & {
@@ -146,10 +148,10 @@ export default function CommunityPage() {
       setLoading(true);
       setErrorText(null);
 
-      // Community metadata
+      // Community metadata (now includes is_hidden)
       const { data: comm, error: ce } = await supabase
         .from('communities')
-        .select('id, name, description, visibility, creator_id, banner_path, banner_alt, banner_updated_at')
+        .select('id, name, description, visibility, creator_id, banner_path, banner_alt, banner_updated_at, is_hidden')
         .eq('id', communityId)
         .single();
 
@@ -370,48 +372,47 @@ export default function CommunityPage() {
 
   /* ---- Actions: join/request (via RPC), vote, save ---- */
   const handleJoin = async () => {
-  if (!community || joinBusy) return;
-  if (!userId) { router.push('/login'); return; }
-  if (isOwner) return; // owners don't join
+    if (!community || joinBusy) return;
+    if (!userId) { router.push('/login'); return; }
+    if (isOwner) return; // owners don't join
 
-  setJoinBusy(true);
-  try {
-    const { data, error } = await supabase.rpc('join_community', {
-      p_community: community.id,
-    });
+    setJoinBusy(true);
+    try {
+      const { data, error } = await supabase.rpc('join_community', {
+        p_community: community.id,
+      });
 
-    if (error) {
-      console.error('Join failed:', error.message);
-      alert(`Join failed: ${error.message}`);
-      return;
-    }
-
-    const status = (data as any)?.status as
-      | 'approved'
-      | 'pending'
-      | 'banned'
-      | undefined;
-
-    if (status) setMembership(status);
-
-    if (status === 'approved') {
-      if (!followed.find((c) => c.id === community.id)) {
-        addFollowed({
-          id: community.id,
-          name: community.name,
-          description: community.description ?? '',
-        });
+      if (error) {
+        console.error('Join failed:', error.message);
+        alert(`Join failed: ${error.message}`);
+        return;
       }
-    } else if (status === 'pending') {
-      alert('Join request sent ✅');
-    } else if (status === 'banned') {
-      alert('You are banned from this community.');
-    }
-  } finally {
-    setJoinBusy(false);
-  }
-};
 
+      const status = (data as any)?.status as
+        | 'approved'
+        | 'pending'
+        | 'banned'
+        | undefined;
+
+      if (status) setMembership(status);
+
+      if (status === 'approved') {
+        if (!followed.find((c) => c.id === community.id)) {
+          addFollowed({
+            id: community.id,
+            name: community.name,
+            description: community.description ?? '',
+          });
+        }
+      } else if (status === 'pending') {
+        alert('Join request sent ✅');
+      } else if (status === 'banned') {
+        alert('You are banned from this community.');
+      }
+    } finally {
+      setJoinBusy(false);
+    }
+  };
 
   const handleVote = async (postId: string, type: 'upvote' | 'downvote') => {
     if (!profileId) return alert('Please login to vote.');
@@ -517,9 +518,16 @@ export default function CommunityPage() {
                   {community.description}
                 </p>
               )}
-              <span className="mt-2 inline-block text-[11px] uppercase tracking-wide px-2 py-0.5 rounded bg-white/15 text-white/95 backdrop-blur">
-                {community.visibility}
-              </span>
+              <div className="mt-2 flex items-center gap-2">
+                <span className="inline-block text-[11px] uppercase tracking-wide px-2 py-0.5 rounded bg-white/15 text-white/95 backdrop-blur">
+                  {community.visibility}
+                </span>
+                {community.is_hidden && (
+                  <span className="inline-block text-[11px] uppercase tracking-wide px-2 py-0.5 rounded bg-black/60 text-white/95 backdrop-blur" title="Hidden from Explore/Search">
+                    hidden
+                  </span>
+                )}
+              </div>
             </div>
 
             {/* Action buttons */}
@@ -578,6 +586,13 @@ export default function CommunityPage() {
           </div>
         </div>
       </div>
+
+      {/* Hidden banner (for clarity) */}
+      {community.is_hidden && (
+        <div className="mb-4 rounded border border-dashed bg-yellow-50 text-yellow-800 p-3 text-sm">
+          This community is <b>hidden</b> from Explore & in-app search. Direct links still work.
+        </div>
+      )}
 
       {/* Posts / content area */}
       <div className="px-4 sm:px-0">
@@ -653,7 +668,7 @@ export default function CommunityPage() {
                       <span>· {post.created_at ? new Date(post.created_at).toLocaleString() : ''}</span>
                     </div>
 
-                    <p className="text-gray-700">{preview(post.content)}</p>
+                    <p className="text-gray-700">{(post.content ?? '').length > 180 ? (post.content ?? '').slice(0, 180) + '…' : (post.content ?? '')}</p>
 
                     <div className="mt-3 flex items-center space-x-4 text-sm">
                       <button onClick={() => handleVote(post.id, 'upvote')}>🔼</button>

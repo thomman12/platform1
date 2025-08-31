@@ -45,6 +45,7 @@ type ModLog = {
 };
 
 type TabKey = 'requests' | 'members' | 'banned' | 'audit';
+type OwnerProfile = { id: string; username: string | null; avatar_id: string | null } | null;
 
 export default function CommunityAdminPage() {
   const supabase = createClientComponentClient<Database>();
@@ -93,6 +94,9 @@ export default function CommunityAdminPage() {
     danger?: boolean;
   }>({ action: null, targetId: null });
 
+  // Owner chip
+  const [owner, setOwner] = useState<OwnerProfile>(null);
+
   const isOwner = useMemo(() => {
     if (!community || !authUserId) return false;
     return community.creator_id === authUserId || role === 'owner';
@@ -135,6 +139,46 @@ export default function CommunityAdminPage() {
       setLoading(false);
     })();
   }, [communityId, supabase]);
+
+  /* ---------- Owner chip: load + realtime ---------- */
+  useEffect(() => {
+    let unsub: (() => void) | null = null;
+
+    const loadOwner = async (ownerId: string | null) => {
+      if (!ownerId) {
+        setOwner(null);
+        return;
+      }
+      const { data } = await supabase
+        .from('profiles')
+        .select('id, username, avatar_id')
+        .eq('id', ownerId)
+        .maybeSingle();
+      setOwner(data ?? null);
+    };
+
+    if (community?.creator_id) loadOwner(community.creator_id);
+
+    if (communityId) {
+      const ch = supabase
+        .channel(`comm-owner-${communityId}`)
+        .on(
+          'postgres_changes',
+          { event: 'UPDATE', schema: 'public', table: 'communities', filter: `id=eq.${communityId}` },
+          async (payload) => {
+            const newOwnerId = (payload.new as any)?.creator_id ?? null;
+            await loadOwner(newOwnerId);
+          }
+        )
+        .subscribe();
+
+      unsub = () => supabase.removeChannel(ch);
+    }
+
+    return () => {
+      if (unsub) unsub();
+    };
+  }, [community?.creator_id, communityId, supabase]);
 
   /* ---------- helpers ---------- */
   const withActing = (pid: string, fn: () => Promise<void>) => {
@@ -336,9 +380,16 @@ export default function CommunityAdminPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [communityId, isOwner, isMod]);
 
-  const canShowActions = (target: MemberUser) =>
-    (role === 'owner' && target.role !== 'owner') ||
-    (role === 'moderator' && target.role === 'member');
+  const canShowActions = (target: MemberUser) => {
+  if (!community) return false;
+
+  // never show actions on the current owner row
+  if (target.profile_id === community.creator_id) return false;
+
+  if (role === 'owner') return true;               // owner can act on anyone else
+  if (role === 'moderator') return target.role === 'member';
+  return false;
+};
 
   const promoteToMod = async (pid: string, reason?: string | null) => {
     await supabase
@@ -558,12 +609,16 @@ export default function CommunityAdminPage() {
             </span>
           </p>
         </div>
-        <Link
-          href={`/community/${communityId}`}
-          className="text-sm text-blue-600 hover:underline"
-        >
-          ← Back to community
-        </Link>
+
+        <div className="flex items-center gap-3">
+          <OwnerChip owner={owner} />
+          <Link
+            href={`/community/${communityId}`}
+            className="text-sm text-blue-600 hover:underline"
+          >
+            ← Back to community
+          </Link>
+        </div>
       </div>
 
       {/* Tabs */}
@@ -681,8 +736,8 @@ export default function CommunityAdminPage() {
                                   targetId: m.profile_id,
                                   targetName: m.username,
                                   headline: 'Promote to moderator',
-                                  confirm: async (reason) => withActing(m.profile_id, () => promoteToMod(m.profile_id, reason)
-                                  ),
+                                  confirm: async (reason) =>
+                                    withActing(m.profile_id, () => promoteToMod(m.profile_id, reason)),
                                 })
                               }
                               accent="indigo"
@@ -699,8 +754,8 @@ export default function CommunityAdminPage() {
                                   targetId: m.profile_id,
                                   targetName: m.username,
                                   headline: 'Demote to member',
-                                  confirm: async (reason) => withActing(m.profile_id, () => demoteToMember(m.profile_id, reason)
-                                  ),
+                                  confirm: async (reason) =>
+                                    withActing(m.profile_id, () => demoteToMember(m.profile_id, reason)),
                                 })
                               }
                               accent="yellow"
@@ -716,8 +771,8 @@ export default function CommunityAdminPage() {
                                 targetId: m.profile_id,
                                 targetName: m.username,
                                 headline: 'Remove member',
-                                confirm: async (reason) => withActing(m.profile_id, () => removeMember(m.profile_id, reason)
-                                ),
+                                confirm: async (reason) =>
+                                  withActing(m.profile_id, () => removeMember(m.profile_id, reason)),
                               })
                             }
                           >
@@ -732,7 +787,8 @@ export default function CommunityAdminPage() {
                                 targetName: m.username,
                                 headline: 'Ban member',
                                 danger: true,
-                                confirm: async (reason) => withActing(m.profile_id, () => banMember(m.profile_id, reason)),
+                                confirm: async (reason) =>
+                                  withActing(m.profile_id, () => banMember(m.profile_id, reason)),
                               })
                             }
                             danger
@@ -783,7 +839,8 @@ export default function CommunityAdminPage() {
                           targetId: u.profile_id,
                           targetName: u.username,
                           headline: 'Unban user',
-                          confirm: async (reason) => withActing(u.profile_id, () => unbanMember(u.profile_id, reason)),
+                          confirm: async (reason) =>
+                            withActing(u.profile_id, () => unbanMember(u.profile_id, reason)),
                         })
                       }
                       primary
@@ -904,6 +961,22 @@ function AvatarBubble({ avatarId, size = 32 }: { avatarId?: string | null; size?
       style={{ width: size, height: size }}
     >
       {src ? <img src={src} className="w-full h-full object-cover" alt="avatar" /> : <span>🙂</span>}
+    </div>
+  );
+}
+
+function OwnerChip({ owner }: { owner: OwnerProfile }) {
+  return (
+    <div className="inline-flex items-center gap-2 px-3 py-2 rounded border bg-white">
+      <span className="text-sm text-gray-600">Owner:</span>
+      {owner ? (
+        <>
+          <AvatarBubble avatarId={owner.avatar_id} size={20} />
+          <span className="text-sm font-medium">{owner.username ?? owner.id}</span>
+        </>
+      ) : (
+        <span className="text-sm text-gray-400">unknown</span>
+      )}
     </div>
   );
 }
@@ -1039,9 +1112,7 @@ function ReasonModal({
         <h3 className="text-lg font-semibold mb-2">{headline}</h3>
         {detail && <p className="text-sm text-gray-600 mb-3">{detail}</p>}
 
-        <label className="block text-sm text-gray-600 mb-1">
-          Reason (optional)
-        </label>
+        <label className="block text-sm text-gray-600 mb-1">Reason (optional)</label>
         <textarea
           value={reason}
           onChange={(e) => onReasonChange(e.target.value)}
@@ -1060,9 +1131,7 @@ function ReasonModal({
           <button
             onClick={onConfirm}
             className={`px-3 py-1 rounded text-sm text-white ${
-              danger
-                ? 'bg-red-600 hover:bg-red-700'
-                : 'bg-blue-600 hover:bg-blue-700'
+              danger ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'
             }`}
           >
             {actionTitle}

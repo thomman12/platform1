@@ -15,6 +15,7 @@ type Community = {
   name: string;
   description: string | null;
   visibility: Visibility;
+  // is_hidden exists in DB but we don't need it in the UI type for now
 };
 
 export default function HomeFeed() {
@@ -56,6 +57,7 @@ export default function HomeFeed() {
         .from("communities")
         .select("id, name, description, visibility")
         .ilike("name", `${search}%`)
+        .eq("is_hidden", false) // ← exclude hidden communities
         .order("name", { ascending: true })
         .limit(10);
 
