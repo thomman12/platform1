@@ -116,22 +116,24 @@ export default function CommunityAdminPage() {
       setAuthUserId(uid);
 
       // load community
-      const { data: comm } = await supabase
+      const { data: comm, error: ce } = await supabase
         .from('communities')
         .select('*')
         .eq('id', communityId)
         .maybeSingle();
+      if (ce) console.error('community load error:', ce.message);
       setCommunity(comm ?? null);
 
       // load my membership/role
       if (uid) {
-        const { data: mem } = await supabase
+        const { data: mem, error: me } = await supabase
           .from('community_members')
           .select('status, role')
           .eq('community_id', communityId)
           .eq('profile_id', uid)
           .maybeSingle();
 
+        if (me) console.error('my membership load error:', me.message);
         setRole((mem?.role as any) ?? null);
         setStatus((mem?.status as any) ?? 'none');
       }
@@ -217,7 +219,6 @@ export default function CommunityAdminPage() {
     }
   };
 
-  // Open reason modal with a configured confirm action
   const openReason = (opts: {
     action: ModAction;
     targetId: string;
@@ -245,41 +246,27 @@ export default function CommunityAdminPage() {
     setReasonContext({ action: null, targetId: null });
   };
 
-  /* ---------- REQUESTS ---------- */
+  /* ---------- REQUESTS (via RPC for full visibility) ---------- */
   const refreshPending = async () => {
     if (!communityId) return;
     setLoadingPending(true);
 
-    const { data: cm, error } = await supabase
-      .from('community_members')
-      .select('profile_id, created_at')
-      .eq('community_id', communityId)
-      .eq('status', 'pending');
-    if (error) console.error(error);
+    const { data, error } = await supabase.rpc('admin_list_pending', {
+      p_community: communityId,
+    });
 
-    const ids = (cm ?? []).map((r) => r.profile_id);
-    if (!ids.length) {
+    if (error) {
+      console.error('admin_list_pending error:', error.message);
       setPending([]);
       setLoadingPending(false);
       return;
     }
 
-    const { data: profs, error: pErr } = await supabase
-      .from('profiles')
-      .select('id, username, avatar_id')
-      .in('id', ids);
-    if (pErr) console.error(pErr);
-
-    const pmap = new Map<string, { username: string | null; avatar_id: string | null }>();
-    (profs ?? []).forEach((p: any) =>
-      pmap.set(p.id, { username: p.username ?? null, avatar_id: p.avatar_id ?? null })
-    );
-
-    const list: PendingUser[] = (cm ?? []).map((row: any) => ({
-      profile_id: row.profile_id,
-      username: pmap.get(row.profile_id)?.username ?? null,
-      avatar_id: pmap.get(row.profile_id)?.avatar_id ?? null,
-      requested_at: row.created_at ?? null,
+    const list: PendingUser[] = (data ?? []).map((r: any) => ({
+      profile_id: r.profile_id,
+      username: r.username ?? null,
+      avatar_id: r.avatar_id ?? null,
+      requested_at: r.requested_at ?? null,
     }));
 
     list.sort((a, b) => (a.requested_at ?? '').localeCompare(b.requested_at ?? ''));
@@ -293,73 +280,71 @@ export default function CommunityAdminPage() {
     } else {
       setPending([]);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [communityId, isOwner, isMod]);
+  }, [communityId, isOwner, isMod]); // eslint-disable-line
 
   const approve = async (pid: string) => {
-    await supabase
+    const { error } = await supabase
       .from('community_members')
-      .update({ status: 'approved' })
+      .update({ status: 'approved', status_changed_at: new Date().toISOString() })
       .eq('community_id', communityId)
       .eq('profile_id', pid)
       .eq('status', 'pending');
 
+    if (error) {
+      console.error('approve error:', error.message);
+      setNotice(error.message);
+      return;
+    }
+
     await logAction('approve', pid);
     setPending((prev) => prev.filter((u) => u.profile_id !== pid));
-    refreshMembers();
+    await refreshMembers();
     setNotice('Approved request.');
   };
 
   const reject = async (pid: string, reason?: string | null) => {
-    await supabase
+    const { error } = await supabase
       .from('community_members')
       .delete()
       .eq('community_id', communityId)
       .eq('profile_id', pid)
       .eq('status', 'pending');
 
+    if (error) {
+      console.error('reject error:', error.message);
+      setNotice(error.message);
+      return;
+    }
+
     await logAction('reject', pid, reason);
     setPending((prev) => prev.filter((u) => u.profile_id !== pid));
     setNotice('Request rejected.');
   };
 
-  /* ---------- MEMBERS ---------- */
+  /* ---------- MEMBERS (via RPC for full visibility) ---------- */
   const refreshMembers = async () => {
     if (!communityId) return;
     setLoadingMembers(true);
 
-    const { data: rows } = await supabase
-      .from('community_members')
-      .select('profile_id, role, created_at')
-      .eq('community_id', communityId)
-      .eq('status', 'approved');
+    const { data, error } = await supabase.rpc('admin_list_members', {
+      p_community: communityId,
+    });
 
-    const ids = (rows ?? []).map((r) => r.profile_id);
-    if (!ids.length) {
+    if (error) {
+      console.error('admin_list_members error:', error.message);
       setMembers([]);
       setLoadingMembers(false);
       return;
     }
 
-    const { data: profs } = await supabase
-      .from('profiles')
-      .select('id, username, avatar_id')
-      .in('id', ids);
-
-    const pmap = new Map<string, { username: string | null; avatar_id: string | null }>();
-    (profs ?? []).forEach((p: any) =>
-      pmap.set(p.id, { username: p.username ?? null, avatar_id: p.avatar_id ?? null })
-    );
-
-    const list: MemberUser[] = (rows ?? []).map((r: any) => ({
+    const list: MemberUser[] = (data ?? []).map((r: any) => ({
       profile_id: r.profile_id,
       role: r.role as 'owner' | 'moderator' | 'member',
-      joined_at: r.created_at ?? null,
-      username: pmap.get(r.profile_id)?.username ?? null,
-      avatar_id: pmap.get(r.profile_id)?.avatar_id ?? null,
+      joined_at: r.joined_at ?? null,
+      username: r.username ?? null,
+      avatar_id: r.avatar_id ?? null,
     }));
 
-    // owners > moderators > members
     const order = { owner: 0, moderator: 1, member: 2 } as const;
     list.sort((a, b) => {
       const r = order[a.role] - order[b.role];
@@ -377,142 +362,136 @@ export default function CommunityAdminPage() {
     } else {
       setMembers([]);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [communityId, isOwner, isMod]);
+  }, [communityId, isOwner, isMod]); // eslint-disable-line
 
   const canShowActions = (target: MemberUser) => {
-  if (!community) return false;
-
-  // never show actions on the current owner row
-  if (target.profile_id === community.creator_id) return false;
-
-  if (role === 'owner') return true;               // owner can act on anyone else
-  if (role === 'moderator') return target.role === 'member';
-  return false;
-};
+    if (!community) return false;
+    if (target.profile_id === community.creator_id) return false; // never act on owner
+    if (role === 'owner') return true;
+    if (role === 'moderator') return target.role === 'member';
+    return false;
+  };
 
   const promoteToMod = async (pid: string, reason?: string | null) => {
-    await supabase
+    const { error } = await supabase
       .from('community_members')
       .update({ role: 'moderator' })
       .eq('community_id', communityId)
       .eq('profile_id', pid)
       .eq('status', 'approved');
 
+    if (error) {
+      console.error('promote error:', error.message);
+      setNotice(error.message);
+      return;
+    }
+
     await logAction('promote', pid, reason);
-    setMembers((prev) =>
-      prev.map((m) => (m.profile_id === pid ? { ...m, role: 'moderator' } : m))
-    );
+    setMembers((prev) => prev.map((m) => (m.profile_id === pid ? { ...m, role: 'moderator' } : m)));
     setNotice('Promoted to moderator.');
   };
 
   const demoteToMember = async (pid: string, reason?: string | null) => {
-    await supabase
+    const { error } = await supabase
       .from('community_members')
       .update({ role: 'member' })
       .eq('community_id', communityId)
       .eq('profile_id', pid)
       .eq('status', 'approved');
 
+    if (error) {
+      console.error('demote error:', error.message);
+      setNotice(error.message);
+      return;
+    }
+
     await logAction('demote', pid, reason);
-    setMembers((prev) =>
-      prev.map((m) => (m.profile_id === pid ? { ...m, role: 'member' } : m))
-    );
+    setMembers((prev) => prev.map((m) => (m.profile_id === pid ? { ...m, role: 'member' } : m)));
     setNotice('Demoted to member.');
   };
 
   const removeMember = async (pid: string, reason?: string | null) => {
-    await supabase
+    const { error } = await supabase
       .from('community_members')
       .delete()
       .eq('community_id', communityId)
       .eq('profile_id', pid)
       .eq('status', 'approved');
 
+    if (error) {
+      console.error('remove error:', error.message);
+      setNotice(error.message);
+      return;
+    }
+
     await logAction('remove', pid, reason);
     setMembers((prev) => prev.filter((m) => m.profile_id !== pid));
     setNotice('Member removed.');
   };
 
+  /* ---------- BAN / UNBAN via RPC ---------- */
   const banMember = async (pid: string, reason?: string | null) => {
-    await supabase
-      .from('community_members')
-      .update({ status: 'banned' })
-      .eq('community_id', communityId)
-      .eq('profile_id', pid)
-      .eq('status', 'approved');
+    const { error } = await supabase.rpc('admin_ban_member', {
+      p_community: communityId,
+      p_profile: pid,
+      p_reason: reason ?? null,
+    });
 
-    await logAction('ban', pid, reason);
-    setMembers((prev) => prev.filter((m) => m.profile_id !== pid));
-    refreshBanned();
+    if (error) {
+      console.error('admin_ban_member error:', error.message);
+      setNotice(error.message);
+      return;
+    }
+
+    await refreshMembers();
+    await refreshBanned();
     setNotice('Member banned.');
   };
 
-  /* ---------- BANNED (uses status_changed_at) ---------- */
+  const unbanMember = async (pid: string, reason?: string | null) => {
+    const { error } = await supabase.rpc('admin_unban_member', {
+      p_community: communityId,
+      p_profile: pid,
+      p_reason: reason ?? null,
+    });
+
+    if (error) {
+      console.error('admin_unban_member error:', error.message);
+      setNotice(error.message);
+      return;
+    }
+
+    await refreshBanned();
+    await refreshMembers();
+    setNotice('User unbanned.');
+  };
+
+  /* ---------- BANNED (via RPC for full visibility) ---------- */
   const refreshBanned = async () => {
     if (!communityId) return;
     setLoadingBanned(true);
 
-    const { data: rows, error } = await supabase
-      .from('community_members')
-      .select('profile_id, status_changed_at')
-      .eq('community_id', communityId)
-      .eq('status', 'banned');
+    const { data, error } = await supabase.rpc('admin_list_banned', {
+      p_community: communityId,
+    });
 
     if (error) {
-      console.error('refreshBanned error:', error);
+      console.error('admin_list_banned error:', error.message);
       setBanned([]);
       setLoadingBanned(false);
       return;
     }
 
-    const ids = (rows ?? []).map((r) => r.profile_id);
-    if (!ids.length) {
-      setBanned([]);
-      setLoadingBanned(false);
-      return;
-    }
-
-    const { data: profs, error: pErr } = await supabase
-      .from('profiles')
-      .select('id, username, avatar_id')
-      .in('id', ids);
-    if (pErr) {
-      console.error('refreshBanned(profiles) error:', pErr);
-      setBanned([]);
-      setLoadingBanned(false);
-      return;
-    }
-
-    const pmap = new Map<string, { username: string | null; avatar_id: string | null }>();
-    (profs ?? []).forEach((p: any) =>
-      pmap.set(p.id, { username: p.username ?? null, avatar_id: p.avatar_id ?? null })
-    );
-
-    const list: BannedUser[] = (rows ?? []).map((r: any) => ({
+    const list: BannedUser[] = (data ?? []).map((r: any) => ({
       profile_id: r.profile_id,
-      username: pmap.get(r.profile_id)?.username ?? null,
-      avatar_id: pmap.get(r.profile_id)?.avatar_id ?? null,
-      banned_at: r.status_changed_at ?? null,
+      username: r.username ?? null,
+      avatar_id: r.avatar_id ?? null,
+      banned_at: r.banned_at ?? null,
     }));
 
     list.sort((a, b) => (b.banned_at ?? '').localeCompare(a.banned_at ?? ''));
     setBanned(list);
     setLoadingBanned(false);
-  };
-
-  const unbanMember = async (pid: string, reason?: string | null) => {
-    await supabase
-      .from('community_members')
-      .update({ status: 'approved' })
-      .eq('community_id', communityId)
-      .eq('profile_id', pid)
-      .eq('status', 'banned');
-
-    await logAction('unban', pid, reason);
-    setBanned((prev) => prev.filter((u) => u.profile_id !== pid));
-    refreshMembers();
-    setNotice('User unbanned.');
   };
 
   useEffect(() => {
@@ -521,8 +500,7 @@ export default function CommunityAdminPage() {
     } else {
       setBanned([]);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [communityId, isOwner, isMod]);
+  }, [communityId, isOwner, isMod]); // eslint-disable-line
 
   /* ---------- AUDIT LOG ---------- */
   const refreshAudit = async () => {
@@ -576,8 +554,7 @@ export default function CommunityAdminPage() {
     if (communityId && (isOwner || isMod) && activeTab === 'audit') {
       refreshAudit();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [communityId, isOwner, isMod, activeTab]);
+  }, [communityId, isOwner, isMod, activeTab]); // eslint-disable-line
 
   /* ---------- render ---------- */
   if (loading) return <div className="p-6">Loading…</div>;
@@ -686,7 +663,8 @@ export default function CommunityAdminPage() {
                             targetName: u.username,
                             headline: 'Reject request',
                             danger: false,
-                            confirm: async (reason) => withActing(u.profile_id, () => reject(u.profile_id, reason)),
+                            confirm: async (reason) =>
+                              withActing(u.profile_id, () => reject(u.profile_id, reason)),
                           })
                         }
                       >

@@ -22,8 +22,10 @@ type Community = {
   banner_path?: string | null;
   banner_alt?: string | null;
   banner_updated_at?: string | null;
-  /** NEW: hidden from Explore/search */
+  /** Hidden from Explore/search */
   is_hidden?: boolean | null;
+  /** Archived (owner/mods only can view) */
+  is_archived?: boolean | null;
 };
 
 type PostWithAuthor = Database['public']['Tables']['posts']['Row'] & {
@@ -148,10 +150,12 @@ export default function CommunityPage() {
       setLoading(true);
       setErrorText(null);
 
-      // Community metadata (now includes is_hidden)
+      // Community metadata (includes is_hidden + is_archived)
       const { data: comm, error: ce } = await supabase
         .from('communities')
-        .select('id, name, description, visibility, creator_id, banner_path, banner_alt, banner_updated_at, is_hidden')
+        .select(
+          'id, name, description, visibility, creator_id, banner_path, banner_alt, banner_updated_at, is_hidden, is_archived'
+        )
         .eq('id', communityId)
         .single();
 
@@ -204,16 +208,30 @@ export default function CommunityPage() {
   }, [community?.banner_path, community?.banner_updated_at, supabase]);
 
   /* ---- Permissions ---- */
-  const canSeePosts = useMemo(() => {
+  // Who can view this community at all?
+  const canViewCommunity = useMemo(() => {
     if (!community) return false;
+    if (community.is_archived) {
+      // Archived: ONLY owner/moderators can view
+      return isAdmin;
+    }
+    // Not archived: usual visibility flow
     if (community.visibility === 'public') return true;
     return isOwner || membership === 'approved';
-  }, [community, membership, isOwner]);
+  }, [community, isAdmin, isOwner, membership]);
 
-  const canCreatePost = useMemo(
-    () => isOwner || membership === 'approved',
-    [isOwner, membership]
-  );
+  // Posts visibility equals community visibility in this page
+  const canSeePosts = canViewCommunity;
+
+  // Who can create a post from this page?
+  const canCreatePost = useMemo(() => {
+    if (!community) return false;
+    if (community.is_archived) {
+      // Archived: only owner/moderators may create
+      return isAdmin;
+    }
+    return isOwner || membership === 'approved';
+  }, [community, isAdmin, isOwner, membership]);
 
   /* ---- Load posts (respect moderation for non-admins) ---- */
   useEffect(() => {
@@ -375,6 +393,10 @@ export default function CommunityPage() {
     if (!community || joinBusy) return;
     if (!userId) { router.push('/login'); return; }
     if (isOwner) return; // owners don't join
+    if (community.is_archived) {
+      alert('This community is archived. Joining is disabled.');
+      return;
+    }
 
     setJoinBusy(true);
     try {
@@ -469,12 +491,13 @@ export default function CommunityPage() {
 
   /* ---- Helpers ---- */
   const joinLabel = useMemo(() => {
+    if (community?.is_archived) return 'Join (archived)';
     if (membership === 'approved') return 'Joined';
     if (membership === 'pending') return 'Pending';
     return community?.visibility === 'public' ? 'Join' : 'Request';
   }, [membership, community]);
 
-  const canClickJoin = !isOwner && membership === 'none';
+  const canClickJoin = !community?.is_archived && !isOwner && membership === 'none';
   const preview = (t?: string | null, n = 180) =>
     (t ?? '').length > n ? (t ?? '').slice(0, n) + '…' : (t ?? '');
 
@@ -489,6 +512,23 @@ export default function CommunityPage() {
     );
   }
   if (!community) return <p className="p-4">Community not found</p>;
+
+  // Hard gate: if archived and not admin, hide the page entirely.
+  if (community.is_archived && !isAdmin) {
+    return (
+      <div className="p-6 max-w-2xl mx-auto">
+        <div className="rounded border bg-white p-5 shadow-sm">
+          <h1 className="text-xl font-semibold mb-1">Community archived</h1>
+          <p className="text-gray-600">
+            This community has been archived and is only visible to the owner and moderators.
+          </p>
+          <div className="mt-4">
+            <Link href="/home" className="text-blue-600 hover:underline">← Back to Home</Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-0 sm:p-6 max-w-5xl mx-auto">
@@ -523,8 +563,19 @@ export default function CommunityPage() {
                   {community.visibility}
                 </span>
                 {community.is_hidden && (
-                  <span className="inline-block text-[11px] uppercase tracking-wide px-2 py-0.5 rounded bg-black/60 text-white/95 backdrop-blur" title="Hidden from Explore/Search">
+                  <span
+                    className="inline-block text-[11px] uppercase tracking-wide px-2 py-0.5 rounded bg-black/60 text-white/95 backdrop-blur"
+                    title="Hidden from Explore/Search"
+                  >
                     hidden
+                  </span>
+                )}
+                {community.is_archived && (
+                  <span
+                    className="inline-block text-[11px] uppercase tracking-wide px-2 py-0.5 rounded bg-red-600/80 text-white backdrop-blur"
+                    title="Archived: only owner/moderators can view"
+                  >
+                    archived
                   </span>
                 )}
               </div>
@@ -532,8 +583,8 @@ export default function CommunityPage() {
 
             {/* Action buttons */}
             <div className="flex items-center gap-2">
-              {/* Only show Join/Request to non-owners */}
-              {!isOwner && (
+              {/* Join/Request is hidden for archived communities */}
+              {!isOwner && !community.is_archived && (
                 <button
                   disabled={!canClickJoin || joinBusy}
                   onClick={handleJoin}
@@ -587,16 +638,21 @@ export default function CommunityPage() {
         </div>
       </div>
 
-      {/* Hidden banner (for clarity) */}
+      {/* Notices */}
       {community.is_hidden && (
         <div className="mb-4 rounded border border-dashed bg-yellow-50 text-yellow-800 p-3 text-sm">
           This community is <b>hidden</b> from Explore & in-app search. Direct links still work.
         </div>
       )}
+      {community.is_archived && (
+        <div className="mb-4 rounded border border-dashed bg-red-50 text-red-700 p-3 text-sm">
+          Archived: only the owner and moderators can view and post.
+        </div>
+      )}
 
       {/* Posts / content area */}
       <div className="px-4 sm:px-0">
-        {/* Create Post (approved members only, owner included) */}
+        {/* Create Post */}
         {canCreatePost && (
           <div className="flex justify-end mb-4">
             <Link
@@ -668,7 +724,9 @@ export default function CommunityPage() {
                       <span>· {post.created_at ? new Date(post.created_at).toLocaleString() : ''}</span>
                     </div>
 
-                    <p className="text-gray-700">{(post.content ?? '').length > 180 ? (post.content ?? '').slice(0, 180) + '…' : (post.content ?? '')}</p>
+                    <p className="text-gray-700">
+                      {(post.content ?? '').length > 180 ? (post.content ?? '').slice(0, 180) + '…' : (post.content ?? '')}
+                    </p>
 
                     <div className="mt-3 flex items-center space-x-4 text-sm">
                       <button onClick={() => handleVote(post.id, 'upvote')}>🔼</button>
