@@ -225,13 +225,17 @@ export default function CommunityPage() {
 
   // Who can create a post from this page?
   const canCreatePost = useMemo(() => {
-    if (!community) return false;
-    if (community.is_archived) {
-      // Archived: only owner/moderators may create
-      return isAdmin;
-    }
-    return isOwner || membership === 'approved';
-  }, [community, isAdmin, isOwner, membership]);
+  if (!community) return false;
+
+  // Archived: only owner/mods may create
+  if (community.is_archived) return isAdmin;
+
+  // Restricted (join-by-request) but not archived: only owner/mods may create
+  if (community.visibility === 'restricted') return isAdmin;
+
+  // Public/Private (not archived): owner or approved members may create
+  return isOwner || membership === 'approved';
+}, [community, isAdmin, isOwner, membership]);
 
   /* ---- Load posts (respect moderation for non-admins) ---- */
   useEffect(() => {
@@ -646,7 +650,7 @@ export default function CommunityPage() {
       )}
       {community.is_archived && (
         <div className="mb-4 rounded border border-dashed bg-red-50 text-red-700 p-3 text-sm">
-          Archived: only the owner and moderators can view and post.
+          Archived: only the owner and moderators can view.
         </div>
       )}
 

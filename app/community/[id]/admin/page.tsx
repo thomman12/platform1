@@ -282,16 +282,16 @@ export default function CommunityAdminPage() {
     }
   }, [communityId, isOwner, isMod]); // eslint-disable-line
 
+  // APPROVE via RPC (so mods can act through RLS)
   const approve = async (pid: string) => {
-    const { error } = await supabase
-      .from('community_members')
-      .update({ status: 'approved', status_changed_at: new Date().toISOString() })
-      .eq('community_id', communityId)
-      .eq('profile_id', pid)
-      .eq('status', 'pending');
+    const { error } = await supabase.rpc('admin_approve_request', {
+      p_community: communityId,
+      p_profile: pid,
+      p_reason: null,
+    });
 
     if (error) {
-      console.error('approve error:', error.message);
+      console.error('admin_approve_request error:', error.message);
       setNotice(error.message);
       return;
     }
@@ -302,16 +302,16 @@ export default function CommunityAdminPage() {
     setNotice('Approved request.');
   };
 
+  // REJECT via RPC
   const reject = async (pid: string, reason?: string | null) => {
-    const { error } = await supabase
-      .from('community_members')
-      .delete()
-      .eq('community_id', communityId)
-      .eq('profile_id', pid)
-      .eq('status', 'pending');
+    const { error } = await supabase.rpc('admin_reject_request', {
+      p_community: communityId,
+      p_profile: pid,
+      p_reason: reason ?? null,
+    });
 
     if (error) {
-      console.error('reject error:', error.message);
+      console.error('admin_reject_request error:', error.message);
       setNotice(error.message);
       return;
     }
@@ -410,24 +410,24 @@ export default function CommunityAdminPage() {
     setNotice('Demoted to member.');
   };
 
-  const removeMember = async (pid: string, reason?: string | null) => {
-    const { error } = await supabase
-      .from('community_members')
-      .delete()
-      .eq('community_id', communityId)
-      .eq('profile_id', pid)
-      .eq('status', 'approved');
+ const removeMember = async (pid: string, reason?: string | null) => {
+  const { error } = await supabase.rpc('admin_remove_member', {
+    p_community: communityId,
+    p_profile: pid,
+    p_reason: reason ?? null,
+  });
 
-    if (error) {
-      console.error('remove error:', error.message);
-      setNotice(error.message);
-      return;
-    }
+  if (error) {
+    console.error('admin_remove_member error:', error.message);
+    setNotice(error.message);
+    return;
+  }
 
-    await logAction('remove', pid, reason);
-    setMembers((prev) => prev.filter((m) => m.profile_id !== pid));
-    setNotice('Member removed.');
-  };
+  // Refresh to reflect DB truth
+  await refreshMembers();
+  setNotice('Member removed.');
+};
+
 
   /* ---------- BAN / UNBAN via RPC ---------- */
   const banMember = async (pid: string, reason?: string | null) => {
