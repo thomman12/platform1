@@ -41,49 +41,46 @@ export default function SignupAvatarPage() {
   const [overlay, setOverlay] = useState<{ top: number; left: number; width: number; height: number } | null>(null);
   const rocketRef = useRef<HTMLDivElement | null>(null);
 
+  useEffect(() => {
+    if (anim !== 'launching') return;
 
-useEffect(() => {
-  if (anim !== 'launching') return;
+    let raf = 0;
+    const start = performance.now();
 
-  let raf = 0;
-  const start = performance.now();
+    const goToLogin = async () => {
+      try {
+        if (signupPromiseRef.current) await signupPromiseRef.current;
+        router.push('/login');
+      } catch (e: any) {
+        setError(e?.message ?? 'Something went wrong.');
+        setBusy(false);
+        setAnim('idle');
+        if (stageImgRef.current) stageImgRef.current.style.visibility = 'visible';
+        setOverlay(null);
+      }
+    };
 
-  const goToLogin = async () => {
-    try {
-      if (signupPromiseRef.current) await signupPromiseRef.current;
-      router.push('/login');
-    } catch (e: any) {
-      setError(e?.message ?? 'Something went wrong.');
-      setBusy(false);
-      setAnim('idle');
-      if (stageImgRef.current) stageImgRef.current.style.visibility = 'visible';
-      setOverlay(null);
-    }
-  };
-
-  const tick = () => {
-    const el = rocketRef.current;
-    if (el) {
-      const rect = el.getBoundingClientRect();
-      // fully off the top?
-      if (rect.bottom <= 0) {
+    const tick = () => {
+      const el = rocketRef.current;
+      if (el) {
+        const rect = el.getBoundingClientRect();
+        // fully off the top?
+        if (rect.bottom <= 0) {
+          goToLogin();
+          return;
+        }
+      }
+      // hard failsafe after ~12s
+      if (performance.now() - start > 12000) {
         goToLogin();
         return;
       }
-    }
-    // hard failsafe after ~12s
-    if (performance.now() - start > 12000) {
-      goToLogin();
-      return;
-    }
+      raf = requestAnimationFrame(tick);
+    };
+
     raf = requestAnimationFrame(tick);
-  };
-
-  raf = requestAnimationFrame(tick);
-  return () => cancelAnimationFrame(raf);
-}, [anim, router]);
-
-
+    return () => cancelAnimationFrame(raf);
+  }, [anim, router]);
 
   useEffect(() => {
     const raw = sessionStorage.getItem('signupForm');
@@ -102,13 +99,20 @@ useEffect(() => {
 
   function signUpNow(): Promise<void> {
     if (!form || !selected) return Promise.reject(new Error('Please choose an avatar.'));
+    
     return supabase.auth
       .signUp({
         email: form.email,
         password: form.password,
-        options: { data: { username: form.username, preset_avatar_id: selected } },
+        options: {
+          // ⬇️ verification link will open this route in your app
+          emailRedirectTo: `${origin}/auth/callback?next=/home`,
+          // keep sending your metadata; your AvatarFinalizeOnLogin will use it
+          data: { username: form.username, preset_avatar_id: selected },
+        },
       })
-      .then(({ error }) => { if (error) throw error; });
+      .then(({ error }) => { if (error) throw error; })
+      
   }
 
   async function onFinish() {
@@ -174,7 +178,7 @@ useEffect(() => {
   });
 
   return (
-   <div className="min-h-screen w-screen overflow-hidden flex flex-col">
+    <div className="min-h-screen w-screen overflow-hidden flex flex-col">
       {/* Stage (above the dock) */}
       <div className="flex-1 flex items-end justify-center pb-[100px] md:pb-[120px]">
         {stageItem ? (
@@ -231,7 +235,7 @@ useEffect(() => {
 
             {error && <p className="mt-2 text-xs md:text-sm text-red-600 text-center">{error}</p>}
             <p className="mt-2 text-[11px] md:text-xs text-gray-500 text-center">
-              We’ll launch your avatar 🚀 then take you to login.
+              We’ll send a verification link to <b>{form?.email}</b>. Click it, then log in.
             </p>
           </div>
         </div>
@@ -248,12 +252,12 @@ useEffect(() => {
             <div
               ref={rocketRef}
               className={[
-              'relative w-full h-full flex items-center justify-center will-change-transform',
-              anim === 'prep' ? 'anticipate' : '',
-              anim === 'launching' ? 'dramatic-liftoff' : '',
+                'relative w-full h-full flex items-center justify-center will-change-transform',
+                anim === 'prep' ? 'anticipate' : '',
+                anim === 'launching' ? 'dramatic-liftoff' : '',
               ].join(' ')}
+              onAnimationEnd={onLaunchEnd}
             >
-
               {anim === 'launching' && (
                 <div className="bubble-right pop-only">See you in there</div>
               )}

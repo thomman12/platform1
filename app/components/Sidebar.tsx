@@ -128,6 +128,17 @@ export default function Sidebar() {
           ➕ Create Community
         </Link>
 
+
+        <Link
+          href="/campus"
+          className="inline-flex items-center gap-2 rounded-md bg-purple-600 px-3 py-2 text-white hover:bg-purple-700"
+        >
+          Campus
+        </Link>
+
+
+
+
         <div className="bg-gray-100 p-4 rounded shadow-sm">
           <h2 className="text-sm font-semibold mb-2">Communities You Follow</h2>
           <ul className="text-sm text-gray-700 space-y-1">
