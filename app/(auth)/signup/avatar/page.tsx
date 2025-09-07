@@ -60,6 +60,7 @@ export default function SignupAvatarPage() {
       }
     };
 
+
     const tick = () => {
       const el = rocketRef.current;
       if (el) {
@@ -100,13 +101,21 @@ export default function SignupAvatarPage() {
   function signUpNow(): Promise<void> {
     if (!form || !selected) return Promise.reject(new Error('Please choose an avatar.'));
     
+
+    const emailRedirectTo =
+      typeof window !== 'undefined'
+        ? `${window.location.origin}/verified`
+        : undefined;
+
+
+
     return supabase.auth
       .signUp({
         email: form.email,
         password: form.password,
         options: {
           // ⬇️ verification link will open this route in your app
-          emailRedirectTo: `${origin}/auth/callback?next=/home`,
+          emailRedirectTo,
           // keep sending your metadata; your AvatarFinalizeOnLogin will use it
           data: { username: form.username, preset_avatar_id: selected },
         },
