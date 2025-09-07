@@ -30,6 +30,7 @@
     "@types/react-dom": "^19",
     "@types/simple-peer": "^9.11.8",
     "@types/three": "^0.179.0",
+    "supabase": "^2.39.2",
     "tailwindcss": "^4",
     "typescript": "^5"
   }
