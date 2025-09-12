@@ -85,6 +85,17 @@ export default function SignupPage() {
           <p className="text-center text-xs text-gray-500">
             Your account will be created after you pick an avatar on the next step and press <b>Finish</b>.
           </p>
+
+          <div className="text-sm text-gray-600">
+        Are you a university student?{" "}
+        <Link
+          href="/verify"
+          className="font-medium underline underline-offset-2 hover:opacity-80"
+          aria-label="Go to student verification"
+        >
+          Verify your student status
+        </Link>
+      </div>
         </form>
       </div>
     </div>

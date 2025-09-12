@@ -111,6 +111,7 @@ export default function SignupAvatarPage() {
 
     return supabase.auth
       .signUp({
+        
         email: form.email,
         password: form.password,
         options: {
