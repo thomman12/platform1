@@ -129,12 +129,7 @@ export default function Sidebar() {
         </Link>
 
 
-        <Link
-          href="/campus"
-          className="inline-flex items-center gap-2 rounded-md bg-purple-600 px-3 py-2 text-white hover:bg-purple-700"
-        >
-          Campus
-        </Link>
+        
 
 
 

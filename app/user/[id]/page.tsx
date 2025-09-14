@@ -3,9 +3,12 @@
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
-import { Database } from '@/types/supabase';
+import type { Database } from '@/types/supabase';
 
 type Profile = Database['public']['Tables']['profiles']['Row'];
+
+// Narrow type to exactly what we select below
+type ProfileLite = Pick<Profile, 'id' | 'username' | 'created_at'>;
 
 export default function PublicProfilePage() {
   const supabase = createClientComponentClient<Database>();
@@ -13,7 +16,7 @@ export default function PublicProfilePage() {
   const params = useParams<{ id: string }>();
   const profileId = params.id as string;
 
-  const [profile, setProfile] = useState<Profile | null>(null);
+  const [profile, setProfile] = useState<ProfileLite | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -22,9 +25,14 @@ export default function PublicProfilePage() {
         .from('profiles')
         .select('id, username, created_at')
         .eq('id', profileId)
-        .single();
+        .maybeSingle();
 
-      if (!error) setProfile(data);
+      if (error) {
+        console.error('load profile error:', error.message);
+        setProfile(null);
+      } else {
+        setProfile(data ?? null);
+      }
       setLoading(false);
     };
     if (profileId) run();

@@ -47,6 +47,9 @@ type ModLog = {
 type TabKey = 'requests' | 'members' | 'banned' | 'audit';
 type OwnerProfile = { id: string; username: string | null; avatar_id: string | null } | null;
 
+/** helper: coerce null/undefined → undefined for props/params that disallow null */
+const asU = (v: string | null | undefined) => (v ?? undefined);
+
 export default function CommunityAdminPage() {
   const supabase = createClientComponentClient<Database>();
   const params = useParams();
@@ -88,7 +91,7 @@ export default function CommunityAdminPage() {
   const [reasonContext, setReasonContext] = useState<{
     action: ModAction | null;
     targetId: string | null;
-    targetName?: string | null;
+    targetName?: string | null; // allow null OR undefined
     confirm?: (reason: string | null) => Promise<void>;
     headline?: string;
     danger?: boolean;
@@ -232,7 +235,7 @@ export default function CommunityAdminPage() {
     setReasonContext({
       action: opts.action,
       targetId: opts.targetId,
-      targetName: opts.targetName ?? null,
+      targetName: opts.targetName ?? null, // keep as null inside state
       confirm: opts.confirm,
       headline: opts.headline,
       danger: opts.danger,
@@ -287,15 +290,14 @@ export default function CommunityAdminPage() {
     const { error } = await supabase.rpc('admin_approve_request', {
       p_community: communityId,
       p_profile: pid,
-      p_reason: null,
+      // p_reason omitted / undefined (not null) to satisfy generated types
+      p_reason: undefined,
     });
-
     if (error) {
       console.error('admin_approve_request error:', error.message);
       setNotice(error.message);
       return;
     }
-
     await logAction('approve', pid);
     setPending((prev) => prev.filter((u) => u.profile_id !== pid));
     await refreshMembers();
@@ -307,16 +309,14 @@ export default function CommunityAdminPage() {
     const { error } = await supabase.rpc('admin_reject_request', {
       p_community: communityId,
       p_profile: pid,
-      p_reason: reason ?? null,
+      p_reason: asU(reason), // undefined instead of null
     });
-
     if (error) {
       console.error('admin_reject_request error:', error.message);
       setNotice(error.message);
       return;
     }
-
-    await logAction('reject', pid, reason);
+    await logAction('reject', pid, reason ?? null);
     setPending((prev) => prev.filter((u) => u.profile_id !== pid));
     setNotice('Request rejected.');
   };
@@ -386,7 +386,7 @@ export default function CommunityAdminPage() {
       return;
     }
 
-    await logAction('promote', pid, reason);
+    await logAction('promote', pid, reason ?? null);
     setMembers((prev) => prev.map((m) => (m.profile_id === pid ? { ...m, role: 'moderator' } : m)));
     setNotice('Promoted to moderator.');
   };
@@ -405,44 +405,38 @@ export default function CommunityAdminPage() {
       return;
     }
 
-    await logAction('demote', pid, reason);
+    await logAction('demote', pid, reason ?? null);
     setMembers((prev) => prev.map((m) => (m.profile_id === pid ? { ...m, role: 'member' } : m)));
     setNotice('Demoted to member.');
   };
 
- const removeMember = async (pid: string, reason?: string | null) => {
-  const { error } = await supabase.rpc('admin_remove_member', {
-    p_community: communityId,
-    p_profile: pid,
-    p_reason: reason ?? null,
-  });
-
-  if (error) {
-    console.error('admin_remove_member error:', error.message);
-    setNotice(error.message);
-    return;
-  }
-
-  // Refresh to reflect DB truth
-  await refreshMembers();
-  setNotice('Member removed.');
-};
-
+  const removeMember = async (pid: string, reason?: string | null) => {
+    const { error } = await supabase.rpc('admin_remove_member', {
+      p_community: communityId,
+      p_profile: pid,
+      p_reason: asU(reason), // undefined instead of null
+    });
+    if (error) {
+      console.error('admin_remove_member error:', error.message);
+      setNotice(error.message);
+      return;
+    }
+    await refreshMembers();
+    setNotice('Member removed.');
+  };
 
   /* ---------- BAN / UNBAN via RPC ---------- */
   const banMember = async (pid: string, reason?: string | null) => {
     const { error } = await supabase.rpc('admin_ban_member', {
       p_community: communityId,
       p_profile: pid,
-      p_reason: reason ?? null,
+      p_reason: asU(reason),
     });
-
     if (error) {
       console.error('admin_ban_member error:', error.message);
       setNotice(error.message);
       return;
     }
-
     await refreshMembers();
     await refreshBanned();
     setNotice('Member banned.');
@@ -452,15 +446,13 @@ export default function CommunityAdminPage() {
     const { error } = await supabase.rpc('admin_unban_member', {
       p_community: communityId,
       p_profile: pid,
-      p_reason: reason ?? null,
+      p_reason: asU(reason),
     });
-
     if (error) {
       console.error('admin_unban_member error:', error.message);
       setNotice(error.message);
       return;
     }
-
     await refreshBanned();
     await refreshMembers();
     setNotice('User unbanned.');
@@ -660,7 +652,7 @@ export default function CommunityAdminPage() {
                           openReason({
                             action: 'reject',
                             targetId: u.profile_id,
-                            targetName: u.username,
+                            targetName: u.username ?? null, // stays nullable
                             headline: 'Reject request',
                             danger: false,
                             confirm: async (reason) =>
@@ -712,7 +704,7 @@ export default function CommunityAdminPage() {
                                 openReason({
                                   action: 'promote',
                                   targetId: m.profile_id,
-                                  targetName: m.username,
+                                  targetName: m.username ?? null,
                                   headline: 'Promote to moderator',
                                   confirm: async (reason) =>
                                     withActing(m.profile_id, () => promoteToMod(m.profile_id, reason)),
@@ -730,7 +722,7 @@ export default function CommunityAdminPage() {
                                 openReason({
                                   action: 'demote',
                                   targetId: m.profile_id,
-                                  targetName: m.username,
+                                  targetName: m.username ?? null,
                                   headline: 'Demote to member',
                                   confirm: async (reason) =>
                                     withActing(m.profile_id, () => demoteToMember(m.profile_id, reason)),
@@ -747,7 +739,7 @@ export default function CommunityAdminPage() {
                               openReason({
                                 action: 'remove',
                                 targetId: m.profile_id,
-                                targetName: m.username,
+                                targetName: m.username ?? null,
                                 headline: 'Remove member',
                                 confirm: async (reason) =>
                                   withActing(m.profile_id, () => removeMember(m.profile_id, reason)),
@@ -762,7 +754,7 @@ export default function CommunityAdminPage() {
                               openReason({
                                 action: 'ban',
                                 targetId: m.profile_id,
-                                targetName: m.username,
+                                targetName: m.username ?? null,
                                 headline: 'Ban member',
                                 danger: true,
                                 confirm: async (reason) =>
@@ -815,7 +807,7 @@ export default function CommunityAdminPage() {
                         openReason({
                           action: 'unban',
                           targetId: u.profile_id,
-                          targetName: u.username,
+                          targetName: u.username ?? null,
                           headline: 'Unban user',
                           confirm: async (reason) =>
                             withActing(u.profile_id, () => unbanMember(u.profile_id, reason)),
@@ -880,7 +872,7 @@ export default function CommunityAdminPage() {
         onClose={closeReason}
         headline={reasonContext.headline ?? 'Add a note (optional)'}
         action={reasonContext.action ?? null}
-        targetName={reasonContext.targetName ?? null}
+        targetName={reasonContext.targetName ?? undefined} // pass undefined to JSX prop if null
         danger={reasonContext.danger}
         reason={reasonText}
         onReasonChange={setReasonText}
@@ -1052,7 +1044,7 @@ function ReasonModal({
   onReasonChange: (v: string) => void;
   onConfirm: () => Promise<void>;
   action: ModAction | null;
-  targetName: string | null;
+  targetName?: string | null; // accepts null/undefined
   danger?: boolean;
 }) {
   if (!open) return null;

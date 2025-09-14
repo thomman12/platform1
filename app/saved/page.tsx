@@ -15,6 +15,9 @@ type SavedItem = {
   }) | null;
 };
 
+// Null-safe date helper
+const asDate = (v: string | number | Date | null | undefined) => (v ? new Date(v) : null);
+
 export default function SavedPostsPage() {
   const supabase = createClientComponentClient<Database>();
   const [items, setItems] = useState<SavedItem[]>([]);
@@ -94,10 +97,11 @@ export default function SavedPostsPage() {
             return (
               <li key={item.sp_post_id} className="rounded border bg-white p-4 shadow-sm">
                 <div className="mb-1 text-sm text-gray-500">
-                  by <span className="font-medium">
+                  by{" "}
+                  <span className="font-medium">
                     {post.profiles?.username ?? "Unknown"}
                   </span>{" "}
-                  · {new Date(post.created_at).toLocaleString()}
+                  · {asDate(post.created_at)?.toLocaleString() ?? "—"}
                 </div>
                 <h3 className="text-lg font-semibold">{post.title}</h3>
                 <p className="mt-1 text-gray-700 whitespace-pre-wrap">{post.content}</p>
