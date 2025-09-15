@@ -21,6 +21,10 @@ export default function SignupPage() {
 
     const payload: SignupData = { email, password, username };
     sessionStorage.setItem('signupForm', JSON.stringify(payload));
+
+   sessionStorage.setItem('signupFlow', 'normal');
+
+
     router.push('/signup/avatar');
   };
 

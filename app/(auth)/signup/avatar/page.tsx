@@ -6,7 +6,9 @@ import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import type { Database } from '@/types/supabase';
 
 type SignupForm = { email: string; password: string; username: string };
-type AvatarItem  = { id: string; thumb: string; full: string };
+type SignupFlow = 'normal' | 'student';
+
+type AvatarItem = { id: string; thumb: string; full: string };
 
 const AVATARS: AvatarItem[] = [
   { id: 'a1',  thumb: '/avatars/thumbs/a1-thumb.png',  full: '/avatars/full/a1-full.png'  },
@@ -22,28 +24,34 @@ const AVATARS: AvatarItem[] = [
   { id: 'a11', thumb: '/avatars/thumbs/a11-thumb.png', full: '/avatars/full/a11-full.png' },
 ];
 
-
-const getCheckEmailHref = () => {
+/** Build the check-email URL and include both email & flow so refresh works. */
+function getCheckEmailHref(): string {
   try {
     const raw = sessionStorage.getItem('signupForm');
     const email = raw ? (JSON.parse(raw).email as string | undefined) : undefined;
-    return `/signup/check-email${email ? `?e=${encodeURIComponent(email)}` : ''}`;
+    const flow = (sessionStorage.getItem('signupFlow') as SignupFlow | null) ?? 'normal';
+    const qs = new URLSearchParams();
+    if (email) qs.set('e', email);
+    qs.set('flow', flow);
+    return `/signup/check-email?${qs.toString()}`;
   } catch {
     return '/signup/check-email';
   }
-};
+}
 
 type AnimState = 'idle' | 'prep' | 'launching' | 'done';
 
 export default function SignupAvatarPage() {
-  const router   = useRouter();
+  const router = useRouter();
   const supabase = createClientComponentClient<Database>();
 
   const [form, setForm] = useState<SignupForm | null>(null);
+  const [flow, setFlow] = useState<SignupFlow>('normal');
+
   const [selected, setSelected] = useState<string | null>(null);
-  const [hovered, setHovered]   = useState<string | null>(null);
-  const [busy, setBusy]         = useState(false);
-  const [error, setError]       = useState<string | null>(null);
+  const [hovered, setHovered] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const [anim, setAnim] = useState<AnimState>('idle');
   const signupPromiseRef = useRef<Promise<void> | null>(null);
@@ -52,13 +60,14 @@ export default function SignupAvatarPage() {
   const [overlay, setOverlay] = useState<{ top: number; left: number; width: number; height: number } | null>(null);
   const rocketRef = useRef<HTMLDivElement | null>(null);
 
+  /* ---------- animation watcher -> navigate when off-screen ---------- */
   useEffect(() => {
     if (anim !== 'launching') return;
 
     let raf = 0;
     const start = performance.now();
 
-    const goToLogin = async () => {
+    const go = async () => {
       try {
         if (signupPromiseRef.current) await signupPromiseRef.current;
         router.push(getCheckEmailHref());
@@ -71,22 +80,13 @@ export default function SignupAvatarPage() {
       }
     };
 
-
     const tick = () => {
       const el = rocketRef.current;
       if (el) {
         const rect = el.getBoundingClientRect();
-        // fully off the top?
-        if (rect.bottom <= 0) {
-          goToLogin();
-          return;
-        }
+        if (rect.bottom <= 0) return void go();
       }
-      // hard failsafe after ~12s
-      if (performance.now() - start > 12000) {
-        goToLogin();
-        return;
-      }
+      if (performance.now() - start > 12000) return void go(); // hard failsafe
       raf = requestAnimationFrame(tick);
     };
 
@@ -94,8 +94,12 @@ export default function SignupAvatarPage() {
     return () => cancelAnimationFrame(raf);
   }, [anim, router]);
 
+  /* ---------- bootstrap form + flow ---------- */
   useEffect(() => {
     const raw = sessionStorage.getItem('signupForm');
+    const f = (sessionStorage.getItem('signupFlow') as SignupFlow | null) ?? 'normal';
+    setFlow(f);
+
     if (!raw) return router.replace('/signup');
     try {
       const parsed: SignupForm = JSON.parse(raw);
@@ -106,50 +110,73 @@ export default function SignupAvatarPage() {
     }
   }, [router]);
 
-  const stageId   = useMemo(() => hovered ?? selected ?? AVATARS[0]?.id, [hovered, selected]);
-  const stageItem = AVATARS.find(a => a.id === stageId);
+  const stageId = useMemo(() => hovered ?? selected ?? AVATARS[0]?.id, [hovered, selected]);
+  const stageItem = AVATARS.find((a) => a.id === stageId);
 
-  function signUpNow(): Promise<void> {
-    if (!form || !selected) return Promise.reject(new Error('Please choose an avatar.'));
-    
+  /* ---------- normal flow (magic link) ---------- */
+  function signUpNormal(): Promise<void> {
+    const formOk = form && selected;
+    if (!formOk) return Promise.reject(new Error('Please choose an avatar.'));
 
     const emailRedirectTo =
-      typeof window !== 'undefined'
-        ? `${window.location.origin}/verified`
-        : undefined;
-
-
+      typeof window !== 'undefined' ? `${window.location.origin}/verified` : undefined;
 
     return supabase.auth
       .signUp({
-        
-        email: form.email,
-        password: form.password,
+        email: form!.email,
+        password: form!.password,
         options: {
-          // ⬇️ verification link will open this route in your app
           emailRedirectTo,
-          // keep sending your metadata; your AvatarFinalizeOnLogin will use it
-          data: { username: form.username, preset_avatar_id: selected },
+          data: { username: form!.username, preset_avatar_id: selected },
         },
       })
-      .then(({ error }) => { if (error) throw error; })
-      
+      .then(({ error }) => {
+        if (error) throw error;
+      });
+  }
+
+  /* ---------- student flow (OTP) ---------- */
+  async function createStudentOTP(): Promise<void> {
+    // This route should create/store an OTP and email it; it should NOT call supabase.auth.signUp
+    // You already have/will add it on the server (uses service role).
+    const res = await fetch('/api/student/create', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: form!.email,
+        password: form!.password,
+        username: form!.username,
+        presetAvatarId: selected,
+      }),
+    });
+    if (!res.ok) {
+      let msg = 'Could not start student verification.';
+      try {
+        const j = await res.json();
+        msg = j?.error || msg;
+      } catch {}
+      throw new Error(msg);
+    }
   }
 
   async function onFinish() {
-    if (!form || !selected) { setError('Please choose an avatar.'); return; }
+    if (!form || !selected) {
+      setError('Please choose an avatar.');
+      return;
+    }
     setError(null);
+    setBusy(true);
 
-    signupPromiseRef.current = signUpNow();
+    // Start backend work (depending on flow), then run animation and redirect.
+    signupPromiseRef.current = flow === 'student' ? createStudentOTP() : signUpNormal();
 
+    // launch animation prep
     const el = stageImgRef.current;
     if (el) {
       const rect = el.getBoundingClientRect();
-      // start a touch above the dock so it doesn’t look like it emerges from inside it
       setOverlay({ top: rect.top - 10, left: rect.left, width: rect.width, height: rect.height });
       el.style.visibility = 'hidden';
     }
-
     setAnim('prep');
     setTimeout(() => setAnim('launching'), 900);
   }
@@ -169,34 +196,32 @@ export default function SignupAvatarPage() {
     }
   }
 
-  /* Rising smoke puffs (follow rocket) */
+  /* ---------- smoke/FX ---------- */
   const PUFF_COUNT = 32;
   const smokePuffs = Array.from({ length: PUFF_COUNT }).map((_, i) => {
-    const delay = i * 0.08;
-    const drift = (i % 9 - 4) * 6;
-    const size  = 22 + (i % 6) * 4;
     const style: React.CSSProperties & any = {
-      '--d': `${delay}s`,
-      '--x': `${drift}px`,
-      '--s': `${size}px`,
+      '--d': `${i * 0.08}s`,
+      '--x': `${(i % 9 - 4) * 6}px`,
+      '--s': `${22 + (i % 6) * 4}px`,
     };
     return <span key={`p-${i}`} className="smoke-puff" style={style} />;
   });
 
-  /* Ground bloom cloud (anchored to pad, NOT moving) */
   const GROUND_COUNT = 60;
   const groundPuffs = Array.from({ length: GROUND_COUNT }).map((_, i) => {
-    const spread = (i - (GROUND_COUNT - 1) / 2);
-    const gx = spread * 18;                            // wider spread
-    const gs = 60 + (Math.abs(spread) % 7) * 10;      // bigger puffs
-    const gd = Math.random() * 0.18 + Math.abs(spread) * 0.01; // quick stagger
+    const spread = i - (GROUND_COUNT - 1) / 2;
     const style: React.CSSProperties & any = {
-      '--gx': `${gx}px`,
-      '--gs': `${gs}px`,
-      '--gd': `${gd}s`,
+      '--gx': `${spread * 18}px`,
+      '--gs': `${60 + (Math.abs(spread) % 7) * 10}px`,
+      '--gd': `${Math.random() * 0.18 + Math.abs(spread) * 0.01}s`,
     };
     return <span key={`g-${i}`} className="ground-cloud" style={style} />;
   });
+
+  const helperText =
+    flow === 'student'
+      ? `We’ll email a 6-digit code to ${form?.email}. Enter it on the next screen to confirm.`
+      : `We’ll send a verification link to ${form?.email}. Click it to confirm your account.`;
 
   return (
     <div className="min-h-screen w-screen overflow-hidden flex flex-col">
@@ -219,23 +244,34 @@ export default function SignupAvatarPage() {
       <div className="fixed left-0 right-0 bottom-0 z-40">
         <div className="mx-auto max-w-3xl px-4">
           <div className="rounded-xl border bg-white/95 backdrop-blur p-3 md:p-4 shadow-md">
-            <h2 className="text-xs md:text-sm font-medium text-gray-700 mb-2 text-center">Choose your avatar</h2>
+            <h2 className="text-xs md:text-sm font-medium text-gray-700 mb-2 text-center">
+              Choose your avatar
+            </h2>
             <div className="flex flex-wrap justify-center gap-2.5 md:gap-3">
-              {AVATARS.map(a => {
+              {AVATARS.map((a) => {
                 const isSelected = a.id === selected;
                 return (
                   <button
                     key={a.id}
                     onClick={() => setSelected(a.id)}
                     onMouseEnter={() => setHovered(a.id)}
-                    onMouseLeave={() => setHovered(prev => (prev === a.id ? null : prev))}
+                    onMouseLeave={() =>
+                      setHovered((prev) => (prev === a.id ? null : prev))
+                    }
                     className={[
                       'h-12 w-12 md:h-12 md:w-12 rounded-full overflow-hidden border transition',
-                      isSelected ? 'ring-2 ring-blue-500 border-blue-500' : 'hover:border-gray-400 border-gray-200',
+                      isSelected
+                        ? 'ring-2 ring-blue-500 border-blue-500'
+                        : 'hover:border-gray-400 border-gray-200',
                     ].join(' ')}
                     aria-pressed={isSelected}
                   >
-                    <img src={a.thumb} alt="" className="h-full w-full object-cover" draggable={false} />
+                    <img
+                      src={a.thumb}
+                      alt=""
+                      className="h-full w-full object-cover"
+                      draggable={false}
+                    />
                   </button>
                 );
               })}
@@ -249,23 +285,27 @@ export default function SignupAvatarPage() {
               >
                 {anim === 'idle' ? 'Finish' : 'Launching…'}
               </button>
-              <button onClick={() => history.back()} className="px-4 py-2 rounded border text-sm" disabled={busy}>
+              <button
+                onClick={() => history.back()}
+                className="px-4 py-2 rounded border text-sm"
+                disabled={busy}
+              >
                 Back
               </button>
             </div>
 
-            {error && <p className="mt-2 text-xs md:text-sm text-red-600 text-center">{error}</p>}
-            <p className="mt-2 text-[11px] md:text-xs text-gray-500 text-center">
-              We’ll send a verification link to <b>{form?.email}</b>. Click it, then log in.
-            </p>
+            {error && (
+              <p className="mt-2 text-xs md:text-sm text-red-600 text-center">{error}</p>
+            )}
+            <p className="mt-2 text-[11px] md:text-xs text-gray-500 text-center">{helperText}</p>
           </div>
         </div>
       </div>
 
-      {/* Launch overlay: behind dock (z-30) */}
+      {/* Launch overlay */}
       {(anim === 'prep' || anim === 'launching') && overlay && stageItem?.full && (
         <div className="fixed inset-0 z-30 pointer-events-none">
-          {/* 🚀 Rocket + flame + rising smoke (this lifts off) */}
+          {/* 🚀 Rocket + flame + rising smoke (lifts off) */}
           <div
             className="absolute"
             style={{ top: overlay.top, left: overlay.left, width: overlay.width, height: overlay.height }}
@@ -279,24 +319,14 @@ export default function SignupAvatarPage() {
               ].join(' ')}
               onAnimationEnd={onLaunchEnd}
             >
-              {anim === 'launching' && (
-                <div className="bubble-right pop-only">See you in there</div>
-              )}
-
-              <img
-                src={stageItem.full}
-                alt="launching avatar"
-                className="max-h-full object-contain select-none"
-                draggable={false}
-              />
-
-              {/* 🔥 flame + rising smoke follow the rocket */}
+              {anim === 'launching' && <div className="bubble-right pop-only">See you in there</div>}
+              <img src={stageItem.full} alt="launching avatar" className="max-h-full object-contain select-none" draggable={false} />
               <div className={`flame ${anim === 'launching' ? 'flame-on' : ''}`} />
               {anim === 'launching' && <div className="smoke">{smokePuffs}</div>}
             </div>
           </div>
 
-          {/* 🌫 Ground smoke & shockwave (anchored to pad, independent) */}
+          {/* 🌫 Ground smoke & shockwave */}
           {anim === 'launching' && (
             <div className="absolute bottom-[100px] left-1/2 -translate-x-1/2 z-20">
               <div className="shockwave" />
@@ -309,23 +339,20 @@ export default function SignupAvatarPage() {
 
       {/* Animations / styles */}
       <style jsx global>{`
-        /* anticipation wobble */
         @keyframes anticipateMotion {
           0% { transform: translateY(0) scale(1); }
           50% { transform: translateY(6px) scale(0.97,0.98); }
           100% { transform: translateY(0) scale(1); }
         }
-        /* dramatic, slower liftoff */
         @keyframes liftoff {
-          0%   { transform: translateY(0);        opacity: 1; }
-          40%  { transform: translateY(-40vh);    opacity: 1; }
-          80%  { transform: translateY(-110vh);   opacity: 1; } 
-          100% { transform: translateY(-200vh);   opacity: 1; }
+          0%   { transform: translateY(0); opacity: 1; }
+          40%  { transform: translateY(-40vh); opacity: 1; }
+          80%  { transform: translateY(-110vh); opacity: 1; }
+          100% { transform: translateY(-200vh); opacity: 1; }
         }
         .anticipate { animation: anticipateMotion 0.9s ease-in-out both; }
         .dramatic-liftoff { animation: liftoff 9s cubic-bezier(0.22, 1, 0.36, 1) forwards; }
 
-        /* flame */
         .flame {
           position:absolute; bottom:-18px; left:50%; transform:translateX(-50%);
           width:18px; height:48px; border-radius:9px;
@@ -336,7 +363,6 @@ export default function SignupAvatarPage() {
         .flame-on { opacity:1; animation: flicker 0.18s infinite alternate; }
         @keyframes flicker { from { transform:translateX(-50%) scaleY(0.9); } to { transform:translateX(-50%) scaleY(1.12); } }
 
-        /* big right-side bubble */
         .bubble-right {
           position:absolute;
           top: 22%;
@@ -358,13 +384,9 @@ export default function SignupAvatarPage() {
         }
         .pop-only { animation: bubblePop 1.8s ease-out forwards; }
 
-        /* --- RISING SMOKE --- */
         .smoke {
-          position:absolute;
-          bottom:-4px;
-          left:50%; transform:translateX(-50%);
-          width:140px; height:90px; pointer-events:none;
-          filter: blur(2px);
+          position:absolute; bottom:-4px; left:50%; transform:translateX(-50%);
+          width:140px; height:90px; pointer-events:none; filter: blur(2px);
         }
         .smoke-puff {
           position:absolute; bottom:0; left:50%;
@@ -382,13 +404,9 @@ export default function SignupAvatarPage() {
           100% { transform: translate(calc(var(--x, 0px) * 1.8), -70px) scale(1.25); opacity:0; }
         }
 
-        /* --- GROUND BLOOM (violent) --- */
         .ground-smoke {
-          position:absolute;
-          bottom:-8px;
-          left:50%; transform:translateX(-50%);
-          width:560px; height:170px; pointer-events:none;
-          filter: blur(3px);
+          position:absolute; bottom:-8px; left:50%; transform:translateX(-50%);
+          width:560px; height:170px; pointer-events:none; filter: blur(3px);
         }
         .ground-cloud {
           position:absolute; bottom:0;
@@ -400,7 +418,6 @@ export default function SignupAvatarPage() {
           opacity:0;
           animation: groundBlast 2.6s cubic-bezier(0.2, 0.7, 0.1, 1) var(--gd, 0s) forwards;
         }
-        /* fast shove sideways, then linger & fade */
         @keyframes groundBlast {
           0%   { transform: translateY(12px) scale(0.6); opacity:0; }
           10%  { opacity:0.85; transform: translateY(2px) scale(1.05); }
@@ -409,7 +426,6 @@ export default function SignupAvatarPage() {
           100% { transform: translateY(10px) scale(1.55); opacity:0; }
         }
 
-        /* Low pad haze sheet, expands quickly then drifts */
         .pad-haze {
           position:absolute; bottom:-10px; left:50%; transform:translateX(-50%);
           width: 700px; height: 120px; border-radius: 50%;
@@ -425,13 +441,11 @@ export default function SignupAvatarPage() {
           100% { transform: translateX(-50%) scale(1.9, 1.05); opacity:0; }
         }
 
-        /* Shockwave ring for punch */
         .shockwave {
           position:absolute; bottom:-6px; left:50%; transform:translateX(-50%);
           width: 40px; height: 12px; border-radius: 999px;
           border: 3px solid rgba(230,230,230,0.8);
-          filter: blur(1px);
-          opacity:0;
+          filter: blur(1px); opacity:0;
           animation: shock 0.7s ease-out 0.05s forwards;
         }
         @keyframes shock {
