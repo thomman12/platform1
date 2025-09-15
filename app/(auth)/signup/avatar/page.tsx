@@ -22,6 +22,17 @@ const AVATARS: AvatarItem[] = [
   { id: 'a11', thumb: '/avatars/thumbs/a11-thumb.png', full: '/avatars/full/a11-full.png' },
 ];
 
+
+const getCheckEmailHref = () => {
+  try {
+    const raw = sessionStorage.getItem('signupForm');
+    const email = raw ? (JSON.parse(raw).email as string | undefined) : undefined;
+    return `/signup/check-email${email ? `?e=${encodeURIComponent(email)}` : ''}`;
+  } catch {
+    return '/signup/check-email';
+  }
+};
+
 type AnimState = 'idle' | 'prep' | 'launching' | 'done';
 
 export default function SignupAvatarPage() {
@@ -50,7 +61,7 @@ export default function SignupAvatarPage() {
     const goToLogin = async () => {
       try {
         if (signupPromiseRef.current) await signupPromiseRef.current;
-        router.push('/login');
+        router.push(getCheckEmailHref());
       } catch (e: any) {
         setError(e?.message ?? 'Something went wrong.');
         setBusy(false);
@@ -148,7 +159,7 @@ export default function SignupAvatarPage() {
     setAnim('done');
     try {
       if (signupPromiseRef.current) await signupPromiseRef.current;
-      router.push('/login');
+      router.push(getCheckEmailHref());
     } catch (e: any) {
       setError(e?.message ?? 'Something went wrong.');
       setBusy(false);

@@ -2,6 +2,8 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
+import AuthBrand from '@/app/components/AuthBrand';
 
 type SignupData = { email: string; password: string; username: string };
 
@@ -9,20 +11,20 @@ export default function VerifySignupPage() {
   const router = useRouter();
 
   const [email, setEmail] = useState('');
-  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [username, setUsername] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const onSubmit = (e: React.FormEvent) => {
+  const handleNext = (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
     const trimmedEmail = email.trim();
     const trimmedUsername = username.trim();
 
-    if (!trimmedEmail || !trimmedUsername || !password) {
-      setError('Please fill in email, username and password.');
+    if (!trimmedEmail || !password || !trimmedUsername) {
+      setError('Please fill in email, password, and username.');
       return;
     }
     if (password.length < 6) {
@@ -32,77 +34,87 @@ export default function VerifySignupPage() {
 
     setBusy(true);
 
-    // Save exactly like your normal signup
-    const payload: SignupData = {
-      email: trimmedEmail,
-      password,
-      username: trimmedUsername,
-    };
+    // Save exactly like your normal signup page
+    const payload: SignupData = { email: trimmedEmail, password, username: trimmedUsername };
     sessionStorage.setItem('signupForm', JSON.stringify(payload));
 
-    // (Optional) mark that this came from the student link
+    // Optional flag so you can tell this came from the student flow if needed
     sessionStorage.setItem('signupFlow', 'student');
 
-    // Go to avatar picker; the actual signUp + email is done there
+    // Continue to avatar step; the actual signUp + email verify is done there
     router.push('/signup/avatar');
   };
 
   return (
-    <div className="max-w-md mx-auto p-6 space-y-6">
-      <h1 className="text-2xl font-semibold text-center">Student sign-up</h1>
+    <div className="w-full max-w-md mx-auto">
+      {/* Same brand header / mascot as normal signup */}
+      <AuthBrand />
 
-      <form onSubmit={onSubmit} className="space-y-4">
-        {error && <p className="text-sm text-red-600">{error}</p>}
+      {/* Card */}
+      <div className="rounded-2xl border border-white/30 bg-white/70 backdrop-blur shadow-xl shadow-black/5">
+        <form onSubmit={handleNext} className="p-5 md:p-6 space-y-4">
+          <h1 className="text-xl font-semibold text-center">Student sign-up</h1>
 
-        <label className="block">
-          <span className="text-sm">University email</span>
-          <input
-            type="email"
-            required
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            className="mt-1 w-full rounded border p-2"
-            placeholder="name@youruni.ac.uk"
-          />
-        </label>
+          {error && <p className="text-sm text-red-600">{error}</p>}
 
-        <label className="block">
-          <span className="text-sm">Username</span>
-          <input
-            required
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            className="mt-1 w-full rounded border p-2"
-            placeholder="your handle"
-          />
-        </label>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">University email</label>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              placeholder="name@youruni.ac.uk"
+              className="w-full rounded-md border border-gray-300 bg-white/90 px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+          </div>
 
-        <label className="block">
-          <span className="text-sm">Password</span>
-          <input
-            type="password"
-            required
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="mt-1 w-full rounded border p-2"
-            placeholder="••••••••"
-            minLength={6}
-          />
-        </label>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              minLength={6}
+              placeholder="••••••••"
+              className="w-full rounded-md border border-gray-300 bg-white/90 px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+          </div>
 
-        <button
-          type="submit"
-          disabled={busy}
-          className="w-full rounded-lg bg-black text-white px-4 py-2 disabled:opacity-60"
-        >
-          {busy ? 'Continuing…' : 'Next'}
-        </button>
-      </form>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Username</label>
+            <input
+              type="text"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              required
+              placeholder="your handle"
+              className="w-full rounded-md border border-gray-300 bg-white/90 px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+          </div>
 
-      <p className="text-xs text-gray-500 text-center">
-        After you pick an avatar and press <b>Finish</b>, we’ll send a verification link to your email.
-        Click it to reach the <b>Verified</b> page, then log in.
-      </p>
+          <button
+            type="submit"
+            disabled={busy}
+            className="w-full rounded-md bg-indigo-600 py-2.5 text-white font-semibold shadow-sm hover:bg-indigo-700 transition disabled:opacity-60"
+          >
+            {busy ? 'Continuing…' : 'Next'}
+          </button>
+
+          <p className="text-center text-sm text-gray-700">
+            Already have an account?{' '}
+            <Link href="/login" className="text-indigo-600 hover:underline">
+              Login
+            </Link>
+          </p>
+
+          <p className="text-center text-xs text-gray-500">
+            After you pick an avatar on the next step and press <b>Finish</b>, we’ll send a verification
+            link to your email. Click it to reach the <b>Verified</b> page, then log in.
+          </p>
+        </form>
+      </div>
     </div>
   );
 }

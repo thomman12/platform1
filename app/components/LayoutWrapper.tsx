@@ -7,7 +7,7 @@ import Sidebar from './Sidebar';
 
 export default function LayoutWrapper({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const hideSidebarRoutes = ['/login', '/signup', '/signup/avatar','/verified','/verify'];
+  const hideSidebarRoutes = ['/login', '/signup', '/signup/avatar','/verified','/verify','/signup/check-email'];
   const shouldHideSidebar = hideSidebarRoutes.includes(pathname);
 
   return (
