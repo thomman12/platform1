@@ -26,8 +26,8 @@ const AVATARS: AvatarItem[] = [
   { id: 'a11', thumb: '/avatars/thumbs/a11-thumb.png', full: '/avatars/full/a11-full.png' },
 ];
 
-// CHANGE THIS if your route is named differently (e.g. '/api/student/create')
-const STUDENT_ENDPOINT = '/api/student/register';
+// ✅ Correct student endpoint
+const STUDENT_ENDPOINT = '/api/student/create';
 
 /** Build check-email URL with both email & flow (resilient to refresh). */
 function getCheckEmailHref(): string {
@@ -144,7 +144,8 @@ export default function SignupAvatarPage() {
         email: form.email,
         password: form.password,
         username: form.username,
-        avatarId: selected,
+        // ✅ server expects this exact key
+        presetAvatarId: selected,
       }),
     });
     if (!res.ok) {
@@ -279,7 +280,6 @@ export default function SignupAvatarPage() {
       {/* Launch overlay */}
       {(anim === 'prep' || anim === 'launching') && overlay && stageItem?.full && (
         <div className="fixed inset-0 z-30 pointer-events-none">
-          {/* Rocket */}
           <div className="absolute" style={{ top: overlay.top, left: overlay.left, width: overlay.width, height: overlay.height }}>
             <div
               ref={rocketRef}
@@ -297,7 +297,6 @@ export default function SignupAvatarPage() {
             </div>
           </div>
 
-          {/* Ground FX */}
           {anim === 'launching' && (
             <div className="absolute bottom-[100px] left-1/2 -translate-x-1/2 z-20">
               <div className="shockwave" />
@@ -308,7 +307,6 @@ export default function SignupAvatarPage() {
         </div>
       )}
 
-      {/* Styles */}
       <style jsx global>{`
         @keyframes anticipateMotion { 0% {transform: translateY(0) scale(1);} 50% {transform: translateY(6px) scale(0.97,0.98);} 100% {transform: translateY(0) scale(1);} }
         @keyframes liftoff { 0%{transform:translateY(0);opacity:1;} 40%{transform:translateY(-40vh);} 80%{transform:translateY(-110vh);} 100%{transform:translateY(-200vh);} }
@@ -329,7 +327,7 @@ export default function SignupAvatarPage() {
         @keyframes groundBlast{0%{transform:translateY(12px) scale(.6);opacity:0;}10%{opacity:.85;transform:translateY(2px) scale(1.05);}30%{transform:translateY(0) scale(1.2);opacity:.98;}60%{transform:translateY(4px) scale(1.35);opacity:.9;}100%{transform:translateY(10px) scale(1.55);opacity:0;} }
         .pad-haze{position:absolute;bottom:-10px;left:50%;transform:translateX(-50%);width:700px;height:120px;border-radius:50%;background:radial-gradient(ellipse at center,rgba(220,220,220,.8) 0%,rgba(205,205,205,.6) 55%,rgba(210,210,210,0) 72%);filter:blur(6px);opacity:0;animation:padSpread 3.1s ease-out .05s forwards;}
         @keyframes padSpread{0%{transform:translateX(-50%) scale(.7,.55);opacity:0;}20%{opacity:.75;}55%{transform:translateX(-50%) scale(1.35,.95);opacity:.9;}100%{transform:translateX(-50%) scale(1.9,1.05);opacity:0;} }
-        .shockwave{position:absolute;bottom:-6px;left:50%;transform:translateX(-50%);width:40px;height:12px;border-radius:999px;border:3px solid rgba(230,230,230,.8);filter:blur(1px);opacity:0;animation:shock .7s ease-out .05s forwards;}
+        .shockwave{position:absolute;bottom:-6px;left:50%;transform:translateX(-50%);width:40px;height:12px;border-radius:999px;border:3px solid rgba(230,230,230,0.8);filter:blur(1px);opacity:0;animation:shock .7s ease-out .05s forwards;}
         @keyframes shock{0%{opacity:0;transform:translateX(-50%) scaleX(.6);}15%{opacity:.8;}100%{opacity:0;transform:translateX(-50%) scaleX(9);} }
       `}</style>
     </div>

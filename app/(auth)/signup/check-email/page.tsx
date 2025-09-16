@@ -93,9 +93,11 @@ function CheckEmailInner() {
       }
 
       setSecs(180);
-      setResendMsg(mode === 'link'
-        ? 'Email resent. Check your inbox (and spam).'
-        : 'Code resent. Check your inbox.');
+      setResendMsg(
+        mode === 'link'
+          ? 'Email resent. Check your inbox (and spam).'
+          : 'Code resent. Check your inbox.'
+      );
     } catch (e: any) {
       setResendMsg(e?.message ?? 'Unable to resend right now.');
     } finally {
@@ -167,6 +169,7 @@ function CheckEmailInner() {
                   <input
                     ref={codeRef}
                     inputMode="numeric"
+                    autoComplete="one-time-code"
                     pattern="[0-9]*"
                     maxLength={6}
                     value={code}

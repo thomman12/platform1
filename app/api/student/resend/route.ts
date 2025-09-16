@@ -1,36 +1,37 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabaseAdmin';
-import { sendOtp } from '@/lib/mailer';
+import { sendStudentOtpEmail } from '@/lib/mailer';
+import crypto from 'node:crypto';
 
 export const runtime = 'nodejs';
 
-function genCode() {
-  return Math.floor(100000 + Math.random() * 900000).toString();
-}
+const sixDigit = () => String(Math.floor(100000 + Math.random() * 900000));
+const hash = (s: string) => crypto.createHash('sha256').update(s).digest('hex');
 
 export async function POST(req: Request) {
-  const { email } = await req.json();
-  if (!email) return NextResponse.json({ error: 'Email required' }, { status: 400 });
+  try {
+    const { email } = await req.json();
+    if (!email) return NextResponse.json({ error: 'Missing email' }, { status: 400 });
 
-  const { data: pending, error: fetchErr } = await supabaseAdmin
-    .from('student_otps')
-    .select('email')
-    .eq('email', email)
-    .maybeSingle();
+    const code = sixDigit();
+    const expires_at = new Date(Date.now() + 10 * 60 * 1000).toISOString();
 
-  if (fetchErr) return NextResponse.json({ error: fetchErr.message }, { status: 400 });
-  if (!pending) return NextResponse.json({ error: 'No pending signup for this email' }, { status: 400 });
+    const { error: upErr } = await (supabaseAdmin as any)
+      .from('student_otps')
+      .upsert(
+        {
+          email: String(email).toLowerCase(),
+          code_hash: hash(code),
+          expires_at,
+        },
+        { onConflict: 'email' }
+      );
 
-  const code = genCode();
-  const expiresAt = new Date(Date.now() + 10 * 60_000).toISOString();
+    if (upErr) return NextResponse.json({ error: upErr.message }, { status: 500 });
 
-  const { error } = await supabaseAdmin
-    .from('student_otps')
-    .update({ code, expires_at: expiresAt })
-    .eq('email', email);
-
-  if (error) return NextResponse.json({ error: error.message }, { status: 400 });
-
-  await sendOtp(email, code);
-  return NextResponse.json({ ok: true });
+    await sendStudentOtpEmail(email, code);
+    return NextResponse.json({ ok: true });
+  } catch (e: any) {
+    return NextResponse.json({ error: e?.message ?? 'Server error' }, { status: 500 });
+  }
 }
