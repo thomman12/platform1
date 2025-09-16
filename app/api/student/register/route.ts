@@ -9,25 +9,20 @@ function genCode() {
 }
 
 export async function POST(req: Request) {
-  const { email } = await req.json();
-  if (!email) return NextResponse.json({ error: 'Email required' }, { status: 400 });
-
-  const { data: pending, error: fetchErr } = await supabaseAdmin
-    .from('student_otps')
-    .select('email')
-    .eq('email', email)
-    .maybeSingle();
-
-  if (fetchErr) return NextResponse.json({ error: fetchErr.message }, { status: 400 });
-  if (!pending) return NextResponse.json({ error: 'No pending signup for this email' }, { status: 400 });
+  const { email, password, username, presetAvatarId } = await req.json();
+  if (!email || !password || !username || !presetAvatarId) {
+    return NextResponse.json({ error: 'Missing fields' }, { status: 400 });
+  }
 
   const code = genCode();
   const expiresAt = new Date(Date.now() + 10 * 60_000).toISOString();
 
   const { error } = await supabaseAdmin
     .from('student_otps')
-    .update({ code, expires_at: expiresAt })
-    .eq('email', email);
+    .upsert(
+      { email, code, expires_at: expiresAt, username, password, preset_avatar_id: presetAvatarId },
+      { onConflict: 'email' }
+    );
 
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
 

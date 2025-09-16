@@ -1,3 +1,4 @@
+// app/(auth)/signup/avatar/page.tsx
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -7,24 +8,28 @@ import type { Database } from '@/types/supabase';
 
 type SignupForm = { email: string; password: string; username: string };
 type SignupFlow = 'normal' | 'student';
+type AnimState = 'idle' | 'prep' | 'launching' | 'done';
 
 type AvatarItem = { id: string; thumb: string; full: string };
 
 const AVATARS: AvatarItem[] = [
-  { id: 'a1',  thumb: '/avatars/thumbs/a1-thumb.png',  full: '/avatars/full/a1-full.png'  },
-  { id: 'a2',  thumb: '/avatars/thumbs/a2-thumb.png',  full: '/avatars/full/a2-full.png'  },
-  { id: 'a3',  thumb: '/avatars/thumbs/a3-thumb.png',  full: '/avatars/full/a3-full.png'  },
-  { id: 'a4',  thumb: '/avatars/thumbs/a4-thumb.png',  full: '/avatars/full/a4-full.png'  },
-  { id: 'a5',  thumb: '/avatars/thumbs/a5-thumb.png',  full: '/avatars/full/a5-full.png'  },
-  { id: 'a6',  thumb: '/avatars/thumbs/a6-thumb.png',  full: '/avatars/full/a6-full.png'  },
-  { id: 'a7',  thumb: '/avatars/thumbs/a7-thumb.png',  full: '/avatars/full/a7-full.png'  },
-  { id: 'a8',  thumb: '/avatars/thumbs/a8-thumb.png',  full: '/avatars/full/a8-full.png'  },
-  { id: 'a9',  thumb: '/avatars/thumbs/a9-thumb.png',  full: '/avatars/full/a9-full.png'  },
+  { id: 'a1', thumb: '/avatars/thumbs/a1-thumb.png', full: '/avatars/full/a1-full.png' },
+  { id: 'a2', thumb: '/avatars/thumbs/a2-thumb.png', full: '/avatars/full/a2-full.png' },
+  { id: 'a3', thumb: '/avatars/thumbs/a3-thumb.png', full: '/avatars/full/a3-full.png' },
+  { id: 'a4', thumb: '/avatars/thumbs/a4-thumb.png', full: '/avatars/full/a4-full.png' },
+  { id: 'a5', thumb: '/avatars/thumbs/a5-thumb.png', full: '/avatars/full/a5-full.png' },
+  { id: 'a6', thumb: '/avatars/thumbs/a6-thumb.png', full: '/avatars/full/a6-full.png' },
+  { id: 'a7', thumb: '/avatars/thumbs/a7-thumb.png', full: '/avatars/full/a7-full.png' },
+  { id: 'a8', thumb: '/avatars/thumbs/a8-thumb.png', full: '/avatars/full/a8-full.png' },
+  { id: 'a9', thumb: '/avatars/thumbs/a9-thumb.png', full: '/avatars/full/a9-full.png' },
   { id: 'a10', thumb: '/avatars/thumbs/a10-thumb.png', full: '/avatars/full/a10-full.png' },
   { id: 'a11', thumb: '/avatars/thumbs/a11-thumb.png', full: '/avatars/full/a11-full.png' },
 ];
 
-/** Build the check-email URL and include both email & flow so refresh works. */
+// CHANGE THIS if your route is named differently (e.g. '/api/student/create')
+const STUDENT_ENDPOINT = '/api/student/register';
+
+/** Build check-email URL with both email & flow (resilient to refresh). */
 function getCheckEmailHref(): string {
   try {
     const raw = sessionStorage.getItem('signupForm');
@@ -38,8 +43,6 @@ function getCheckEmailHref(): string {
     return '/signup/check-email';
   }
 }
-
-type AnimState = 'idle' | 'prep' | 'launching' | 'done';
 
 export default function SignupAvatarPage() {
   const router = useRouter();
@@ -60,7 +63,7 @@ export default function SignupAvatarPage() {
   const [overlay, setOverlay] = useState<{ top: number; left: number; width: number; height: number } | null>(null);
   const rocketRef = useRef<HTMLDivElement | null>(null);
 
-  /* ---------- animation watcher -> navigate when off-screen ---------- */
+  // When rocket leaves screen, go to /signup/check-email
   useEffect(() => {
     if (anim !== 'launching') return;
 
@@ -82,11 +85,8 @@ export default function SignupAvatarPage() {
 
     const tick = () => {
       const el = rocketRef.current;
-      if (el) {
-        const rect = el.getBoundingClientRect();
-        if (rect.bottom <= 0) return void go();
-      }
-      if (performance.now() - start > 12000) return void go(); // hard failsafe
+      if (el && el.getBoundingClientRect().bottom <= 0) return void go();
+      if (performance.now() - start > 12000) return void go();
       raf = requestAnimationFrame(tick);
     };
 
@@ -94,7 +94,7 @@ export default function SignupAvatarPage() {
     return () => cancelAnimationFrame(raf);
   }, [anim, router]);
 
-  /* ---------- bootstrap form + flow ---------- */
+  // Load form & flow from sessionStorage
   useEffect(() => {
     const raw = sessionStorage.getItem('signupForm');
     const f = (sessionStorage.getItem('signupFlow') as SignupFlow | null) ?? 'normal';
@@ -113,21 +113,20 @@ export default function SignupAvatarPage() {
   const stageId = useMemo(() => hovered ?? selected ?? AVATARS[0]?.id, [hovered, selected]);
   const stageItem = AVATARS.find((a) => a.id === stageId);
 
-  /* ---------- normal flow (magic link) ---------- */
+  /** Normal flow: Supabase magic link */
   function signUpNormal(): Promise<void> {
-    const formOk = form && selected;
-    if (!formOk) return Promise.reject(new Error('Please choose an avatar.'));
+    if (!form || !selected) return Promise.reject(new Error('Please choose an avatar.'));
 
     const emailRedirectTo =
       typeof window !== 'undefined' ? `${window.location.origin}/verified` : undefined;
 
     return supabase.auth
       .signUp({
-        email: form!.email,
-        password: form!.password,
+        email: form.email,
+        password: form.password,
         options: {
           emailRedirectTo,
-          data: { username: form!.username, preset_avatar_id: selected },
+          data: { username: form.username, preset_avatar_id: selected },
         },
       })
       .then(({ error }) => {
@@ -135,42 +134,34 @@ export default function SignupAvatarPage() {
       });
   }
 
-  /* ---------- student flow (OTP) ---------- */
-  async function createStudentOTP(): Promise<void> {
-    // This route should create/store an OTP and email it; it should NOT call supabase.auth.signUp
-    // You already have/will add it on the server (uses service role).
-    const res = await fetch('/api/student/create', {
+  /** Student flow: call our server to create user + send OTP (no Supabase email) */
+  async function startStudentOtp(): Promise<void> {
+    if (!form || !selected) throw new Error('Please choose an avatar.');
+    const res = await fetch(STUDENT_ENDPOINT, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        email: form!.email,
-        password: form!.password,
-        username: form!.username,
-        presetAvatarId: selected,
+        email: form.email,
+        password: form.password,
+        username: form.username,
+        avatarId: selected,
       }),
     });
     if (!res.ok) {
       let msg = 'Could not start student verification.';
-      try {
-        const j = await res.json();
-        msg = j?.error || msg;
-      } catch {}
+      try { msg = (await res.json())?.error || msg; } catch {}
       throw new Error(msg);
     }
   }
 
   async function onFinish() {
-    if (!form || !selected) {
-      setError('Please choose an avatar.');
-      return;
-    }
+    if (!form || !selected) return setError('Please choose an avatar.');
     setError(null);
     setBusy(true);
 
-    // Start backend work (depending on flow), then run animation and redirect.
-    signupPromiseRef.current = flow === 'student' ? createStudentOTP() : signUpNormal();
+    signupPromiseRef.current = flow === 'student' ? startStudentOtp() : signUpNormal();
 
-    // launch animation prep
+    // animation prep
     const el = stageImgRef.current;
     if (el) {
       const rect = el.getBoundingClientRect();
@@ -196,7 +187,7 @@ export default function SignupAvatarPage() {
     }
   }
 
-  /* ---------- smoke/FX ---------- */
+  // FX
   const PUFF_COUNT = 32;
   const smokePuffs = Array.from({ length: PUFF_COUNT }).map((_, i) => {
     const style: React.CSSProperties & any = {
@@ -225,7 +216,7 @@ export default function SignupAvatarPage() {
 
   return (
     <div className="min-h-screen w-screen overflow-hidden flex flex-col">
-      {/* Stage (above the dock) */}
+      {/* Stage */}
       <div className="flex-1 flex items-end justify-center pb-[100px] md:pb-[120px]">
         {stageItem ? (
           <img
@@ -240,13 +231,11 @@ export default function SignupAvatarPage() {
         )}
       </div>
 
-      {/* Bottom picker dock */}
+      {/* Dock */}
       <div className="fixed left-0 right-0 bottom-0 z-40">
         <div className="mx-auto max-w-3xl px-4">
           <div className="rounded-xl border bg-white/95 backdrop-blur p-3 md:p-4 shadow-md">
-            <h2 className="text-xs md:text-sm font-medium text-gray-700 mb-2 text-center">
-              Choose your avatar
-            </h2>
+            <h2 className="text-xs md:text-sm font-medium text-gray-700 mb-2 text-center">Choose your avatar</h2>
             <div className="flex flex-wrap justify-center gap-2.5 md:gap-3">
               {AVATARS.map((a) => {
                 const isSelected = a.id === selected;
@@ -255,23 +244,14 @@ export default function SignupAvatarPage() {
                     key={a.id}
                     onClick={() => setSelected(a.id)}
                     onMouseEnter={() => setHovered(a.id)}
-                    onMouseLeave={() =>
-                      setHovered((prev) => (prev === a.id ? null : prev))
-                    }
+                    onMouseLeave={() => setHovered((prev) => (prev === a.id ? null : prev))}
                     className={[
                       'h-12 w-12 md:h-12 md:w-12 rounded-full overflow-hidden border transition',
-                      isSelected
-                        ? 'ring-2 ring-blue-500 border-blue-500'
-                        : 'hover:border-gray-400 border-gray-200',
+                      isSelected ? 'ring-2 ring-blue-500 border-blue-500' : 'hover:border-gray-400 border-gray-200',
                     ].join(' ')}
                     aria-pressed={isSelected}
                   >
-                    <img
-                      src={a.thumb}
-                      alt=""
-                      className="h-full w-full object-cover"
-                      draggable={false}
-                    />
+                    <img src={a.thumb} alt="" className="h-full w-full object-cover" draggable={false} />
                   </button>
                 );
               })}
@@ -285,18 +265,12 @@ export default function SignupAvatarPage() {
               >
                 {anim === 'idle' ? 'Finish' : 'Launching…'}
               </button>
-              <button
-                onClick={() => history.back()}
-                className="px-4 py-2 rounded border text-sm"
-                disabled={busy}
-              >
+              <button onClick={() => history.back()} className="px-4 py-2 rounded border text-sm" disabled={busy}>
                 Back
               </button>
             </div>
 
-            {error && (
-              <p className="mt-2 text-xs md:text-sm text-red-600 text-center">{error}</p>
-            )}
+            {error && <p className="mt-2 text-xs md:text-sm text-red-600 text-center">{error}</p>}
             <p className="mt-2 text-[11px] md:text-xs text-gray-500 text-center">{helperText}</p>
           </div>
         </div>
@@ -305,11 +279,8 @@ export default function SignupAvatarPage() {
       {/* Launch overlay */}
       {(anim === 'prep' || anim === 'launching') && overlay && stageItem?.full && (
         <div className="fixed inset-0 z-30 pointer-events-none">
-          {/* 🚀 Rocket + flame + rising smoke (lifts off) */}
-          <div
-            className="absolute"
-            style={{ top: overlay.top, left: overlay.left, width: overlay.width, height: overlay.height }}
-          >
+          {/* Rocket */}
+          <div className="absolute" style={{ top: overlay.top, left: overlay.left, width: overlay.width, height: overlay.height }}>
             <div
               ref={rocketRef}
               className={[
@@ -326,7 +297,7 @@ export default function SignupAvatarPage() {
             </div>
           </div>
 
-          {/* 🌫 Ground smoke & shockwave */}
+          {/* Ground FX */}
           {anim === 'launching' && (
             <div className="absolute bottom-[100px] left-1/2 -translate-x-1/2 z-20">
               <div className="shockwave" />
@@ -337,122 +308,29 @@ export default function SignupAvatarPage() {
         </div>
       )}
 
-      {/* Animations / styles */}
+      {/* Styles */}
       <style jsx global>{`
-        @keyframes anticipateMotion {
-          0% { transform: translateY(0) scale(1); }
-          50% { transform: translateY(6px) scale(0.97,0.98); }
-          100% { transform: translateY(0) scale(1); }
-        }
-        @keyframes liftoff {
-          0%   { transform: translateY(0); opacity: 1; }
-          40%  { transform: translateY(-40vh); opacity: 1; }
-          80%  { transform: translateY(-110vh); opacity: 1; }
-          100% { transform: translateY(-200vh); opacity: 1; }
-        }
-        .anticipate { animation: anticipateMotion 0.9s ease-in-out both; }
-        .dramatic-liftoff { animation: liftoff 9s cubic-bezier(0.22, 1, 0.36, 1) forwards; }
-
-        .flame {
-          position:absolute; bottom:-18px; left:50%; transform:translateX(-50%);
-          width:18px; height:48px; border-radius:9px;
-          background: radial-gradient(circle at 50% 80%, rgba(255,210,60,0.95), rgba(255,140,0,0.9) 60%, rgba(255,120,0,0) 72%);
-          opacity:0;
-          filter: drop-shadow(0 4px 8px rgba(255,120,0,0.35));
-        }
-        .flame-on { opacity:1; animation: flicker 0.18s infinite alternate; }
-        @keyframes flicker { from { transform:translateX(-50%) scaleY(0.9); } to { transform:translateX(-50%) scaleY(1.12); } }
-
-        .bubble-right {
-          position:absolute;
-          top: 22%;
-          left: calc(100% + 16px);
-          background:#fff; color:#000; font-weight:800; font-size:1.15rem;
-          border:3px solid #000; border-radius:14px; padding:10px 14px; white-space:nowrap;
-          box-shadow: 0 2px 6px rgba(0,0,0,0.08);
-        }
-        .bubble-right::after {
-          content:""; position:absolute; top:50%; left:-12px; transform:translateY(-50%);
-          width:0; height:0; border:12px solid transparent; border-right-color:#fff;
-          filter: drop-shadow(-3px 0 0 #000);
-        }
-        @keyframes bubblePop {
-          0% { opacity:0; transform: translate(0, 6px) scale(0.96); }
-          25% { opacity:1; transform: translate(0, 0) scale(1); }
-          70% { opacity:1; }
-          100% { opacity:0; transform: translate(0, -6px) scale(0.98); }
-        }
-        .pop-only { animation: bubblePop 1.8s ease-out forwards; }
-
-        .smoke {
-          position:absolute; bottom:-4px; left:50%; transform:translateX(-50%);
-          width:140px; height:90px; pointer-events:none; filter: blur(2px);
-        }
-        .smoke-puff {
-          position:absolute; bottom:0; left:50%;
-          width: var(--s, 22px); height: var(--s, 22px);
-          margin-left: calc(var(--s, 22px) / -2);
-          border-radius: 999px;
-          background: radial-gradient(circle at 40% 40%, rgba(255,255,255,0.9), rgba(200,200,200,0.55) 60%, rgba(200,200,200,0.0) 75%);
-          opacity:0;
-          animation: smokeRise 2.2s ease-out var(--d, 0s) forwards;
-        }
-        @keyframes smokeRise {
-          0%   { transform: translate(var(--x, 0px), 10px) scale(0.6); opacity:0; }
-          10%  { opacity:0.55; }
-          50%  { transform: translate(calc(var(--x, 0px) * 1.2), -25px) scale(1); opacity:0.75; }
-          100% { transform: translate(calc(var(--x, 0px) * 1.8), -70px) scale(1.25); opacity:0; }
-        }
-
-        .ground-smoke {
-          position:absolute; bottom:-8px; left:50%; transform:translateX(-50%);
-          width:560px; height:170px; pointer-events:none; filter: blur(3px);
-        }
-        .ground-cloud {
-          position:absolute; bottom:0;
-          left: calc(50% + var(--gx, 0px));
-          width: var(--gs, 60px); height: var(--gs, 60px);
-          margin-left: calc(var(--gs, 60px) / -2);
-          border-radius: 9999px;
-          background: radial-gradient(circle at 50% 50%, rgba(235,235,235,0.95), rgba(185,185,185,0.62) 60%, rgba(180,180,180,0.0) 75%);
-          opacity:0;
-          animation: groundBlast 2.6s cubic-bezier(0.2, 0.7, 0.1, 1) var(--gd, 0s) forwards;
-        }
-        @keyframes groundBlast {
-          0%   { transform: translateY(12px) scale(0.6); opacity:0; }
-          10%  { opacity:0.85; transform: translateY(2px) scale(1.05); }
-          30%  { transform: translateY(0px) scale(1.2); opacity:0.98; }
-          60%  { transform: translateY(4px) scale(1.35); opacity:0.9; }
-          100% { transform: translateY(10px) scale(1.55); opacity:0; }
-        }
-
-        .pad-haze {
-          position:absolute; bottom:-10px; left:50%; transform:translateX(-50%);
-          width: 700px; height: 120px; border-radius: 50%;
-          background: radial-gradient(ellipse at center, rgba(220,220,220,0.8) 0%, rgba(205,205,205,0.6) 55%, rgba(210,210,210,0) 72%);
-          filter: blur(6px);
-          opacity:0;
-          animation: padSpread 3.1s ease-out 0.05s forwards;
-        }
-        @keyframes padSpread {
-          0%   { transform: translateX(-50%) scale(0.7, 0.55); opacity:0; }
-          20%  { opacity:0.75; }
-          55%  { transform: translateX(-50%) scale(1.35, 0.95); opacity:0.9; }
-          100% { transform: translateX(-50%) scale(1.9, 1.05); opacity:0; }
-        }
-
-        .shockwave {
-          position:absolute; bottom:-6px; left:50%; transform:translateX(-50%);
-          width: 40px; height: 12px; border-radius: 999px;
-          border: 3px solid rgba(230,230,230,0.8);
-          filter: blur(1px); opacity:0;
-          animation: shock 0.7s ease-out 0.05s forwards;
-        }
-        @keyframes shock {
-          0%   { opacity:0.0; transform:translateX(-50%) scaleX(0.6); }
-          15%  { opacity:0.8; }
-          100% { opacity:0; transform:translateX(-50%) scaleX(9); }
-        }
+        @keyframes anticipateMotion { 0% {transform: translateY(0) scale(1);} 50% {transform: translateY(6px) scale(0.97,0.98);} 100% {transform: translateY(0) scale(1);} }
+        @keyframes liftoff { 0%{transform:translateY(0);opacity:1;} 40%{transform:translateY(-40vh);} 80%{transform:translateY(-110vh);} 100%{transform:translateY(-200vh);} }
+        .anticipate{animation:anticipateMotion 0.9s ease-in-out both;}
+        .dramatic-liftoff{animation:liftoff 9s cubic-bezier(0.22,1,0.36,1) forwards;}
+        .flame{position:absolute;bottom:-18px;left:50%;transform:translateX(-50%);width:18px;height:48px;border-radius:9px;background:radial-gradient(circle at 50% 80%,rgba(255,210,60,.95),rgba(255,140,0,.9) 60%,rgba(255,120,0,0) 72%);opacity:0;filter:drop-shadow(0 4px 8px rgba(255,120,0,.35));}
+        .flame-on{opacity:1;animation:flicker .18s infinite alternate;}
+        @keyframes flicker{from{transform:translateX(-50%) scaleY(.9);} to{transform:translateX(-50%) scaleY(1.12);} }
+        .bubble-right{position:absolute;top:22%;left:calc(100% + 16px);background:#fff;color:#000;font-weight:800;font-size:1.15rem;border:3px solid #000;border-radius:14px;padding:10px 14px;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,.08);}
+        .bubble-right::after{content:"";position:absolute;top:50%;left:-12px;transform:translateY(-50%);width:0;height:0;border:12px solid transparent;border-right-color:#fff;filter:drop-shadow(-3px 0 0 #000);}
+        @keyframes bubblePop{0%{opacity:0;transform:translate(0,6px) scale(.96);}25%{opacity:1;transform:translate(0,0) scale(1);}70%{opacity:1;}100%{opacity:0;transform:translate(0,-6px) scale(.98);} }
+        .pop-only{animation:bubblePop 1.8s ease-out forwards;}
+        .smoke{position:absolute;bottom:-4px;left:50%;transform:translateX(-50%);width:140px;height:90px;pointer-events:none;filter:blur(2px);}
+        .smoke-puff{position:absolute;bottom:0;left:50%;width:var(--s,22px);height:var(--s,22px);margin-left:calc(var(--s,22px)/-2);border-radius:999px;background:radial-gradient(circle at 40% 40%,rgba(255,255,255,.9),rgba(200,200,200,.55) 60%,rgba(200,200,200,0) 75%);opacity:0;animation:smokeRise 2.2s ease-out var(--d,0s) forwards;}
+        @keyframes smokeRise{0%{transform:translate(var(--x,0px),10px) scale(.6);opacity:0;}10%{opacity:.55;}50%{transform:translate(calc(var(--x,0px) * 1.2),-25px) scale(1);opacity:.75;}100%{transform:translate(calc(var(--x,0px) * 1.8),-70px) scale(1.25);opacity:0;} }
+        .ground-smoke{position:absolute;bottom:-8px;left:50%;transform:translateX(-50%);width:560px;height:170px;pointer-events:none;filter:blur(3px);}
+        .ground-cloud{position:absolute;bottom:0;left:calc(50% + var(--gx,0px));width:var(--gs,60px);height:var(--gs,60px);margin-left:calc(var(--gs,60px)/-2);border-radius:9999px;background:radial-gradient(circle at 50% 50%,rgba(235,235,235,.95),rgba(185,185,185,.62) 60%,rgba(180,180,180,0) 75%);opacity:0;animation:groundBlast 2.6s cubic-bezier(.2,.7,.1,1) var(--gd,0s) forwards;}
+        @keyframes groundBlast{0%{transform:translateY(12px) scale(.6);opacity:0;}10%{opacity:.85;transform:translateY(2px) scale(1.05);}30%{transform:translateY(0) scale(1.2);opacity:.98;}60%{transform:translateY(4px) scale(1.35);opacity:.9;}100%{transform:translateY(10px) scale(1.55);opacity:0;} }
+        .pad-haze{position:absolute;bottom:-10px;left:50%;transform:translateX(-50%);width:700px;height:120px;border-radius:50%;background:radial-gradient(ellipse at center,rgba(220,220,220,.8) 0%,rgba(205,205,205,.6) 55%,rgba(210,210,210,0) 72%);filter:blur(6px);opacity:0;animation:padSpread 3.1s ease-out .05s forwards;}
+        @keyframes padSpread{0%{transform:translateX(-50%) scale(.7,.55);opacity:0;}20%{opacity:.75;}55%{transform:translateX(-50%) scale(1.35,.95);opacity:.9;}100%{transform:translateX(-50%) scale(1.9,1.05);opacity:0;} }
+        .shockwave{position:absolute;bottom:-6px;left:50%;transform:translateX(-50%);width:40px;height:12px;border-radius:999px;border:3px solid rgba(230,230,230,.8);filter:blur(1px);opacity:0;animation:shock .7s ease-out .05s forwards;}
+        @keyframes shock{0%{opacity:0;transform:translateX(-50%) scaleX(.6);}15%{opacity:.8;}100%{opacity:0;transform:translateX(-50%) scaleX(9);} }
       `}</style>
     </div>
   );
