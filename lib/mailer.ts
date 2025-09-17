@@ -1,37 +1,40 @@
-import nodemailer from 'nodemailer';
+// lib/mailer.ts — HTTP mailer for student OTP only
 
-const {
-  SMTP_HOST,
-  SMTP_PORT = '587',
-  SMTP_USER,
-  SMTP_PASS,
-  SMTP_FROM = '"Orbio" <noreply@orbi.org.uk>',
-} = process.env;
+const API_KEY = process.env.BREVO_API_KEY!;
+const FROM_EMAIL = process.env.MAIL_FROM_EMAIL || 'noreply@orbi.org.uk';
+const FROM_NAME  = process.env.MAIL_FROM_NAME  || 'Orbio';
 
-const portNum = Number(SMTP_PORT);
-const secure = portNum === 465; // 465 = SSL; 587 = STARTTLS
-
-export const mailer = nodemailer.createTransport({
-  host: SMTP_HOST,
-  port: portNum,
-  secure,
-  auth: { user: SMTP_USER!, pass: SMTP_PASS! },
-});
-
-export async function sendOtpEmail(to: string, code: string) {
-  const html = `
+function otpHtml(code: string) {
+  return `
     <div style="font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif">
       <h2>Your Orbio verification code</h2>
       <p>Use this code to verify your email:</p>
-      <div style="font-size:28px;font-weight:700;letter-spacing:6px;margin:16px 0">${code}</div>
-      <p>It expires in 10 minutes.</p>
+      <div style="font-size:28px;font-weight:700;letter-spacing:6px;margin:16px 0">
+        ${code}
+      </div>
+      <p>This code expires in 10 minutes.</p>
     </div>
   `;
-  await mailer.sendMail({
-    from: SMTP_FROM,
-    to,
-    subject: 'Your verification code',
-    text: `Your code is: ${code} (valid 10 minutes)`,
-    html,
+}
+
+export async function sendOtpEmail(to: string, code: string) {
+  const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'api-key': API_KEY,
+    },
+    body: JSON.stringify({
+      sender: { name: FROM_NAME, email: FROM_EMAIL },
+      to: [{ email: to }],
+      subject: 'Your verification code',
+      htmlContent: otpHtml(code),
+      textContent: `Your verification code is ${code}. It expires in 10 minutes.`,
+    }),
   });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Brevo API failed (${res.status}): ${text || res.statusText}`);
+  }
 }
