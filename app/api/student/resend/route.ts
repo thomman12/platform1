@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabaseAdmin';
-import { sendStudentOtpEmail } from '@/lib/mailer';
+import { sendOtpEmail } from '@/lib/mailer';
 import crypto from 'node:crypto';
 
 export const runtime = 'nodejs';
@@ -29,7 +29,7 @@ export async function POST(req: Request) {
 
     if (upErr) return NextResponse.json({ error: upErr.message }, { status: 500 });
 
-    await sendStudentOtpEmail(email, code);
+    await sendOtpEmail(email, code);
     return NextResponse.json({ ok: true });
   } catch (e: any) {
     return NextResponse.json({ error: e?.message ?? 'Server error' }, { status: 500 });

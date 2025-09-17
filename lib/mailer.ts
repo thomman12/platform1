@@ -1,21 +1,37 @@
 import nodemailer from 'nodemailer';
 
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST!,                   // e.g. smtp-relay.brevo.com
-  port: Number(process.env.SMTP_PORT || 587),
-  secure: Number(process.env.SMTP_PORT) === 465,
-  auth: { user: process.env.SMTP_USER!, pass: process.env.SMTP_PASS! },
+const {
+  SMTP_HOST,
+  SMTP_PORT = '587',
+  SMTP_USER,
+  SMTP_PASS,
+  SMTP_FROM = '"Orbio" <noreply@orbi.org.uk>',
+} = process.env;
+
+const portNum = Number(SMTP_PORT);
+const secure = portNum === 465; // 465 = SSL; 587 = STARTTLS
+
+export const mailer = nodemailer.createTransport({
+  host: SMTP_HOST,
+  port: portNum,
+  secure,
+  auth: { user: SMTP_USER!, pass: SMTP_PASS! },
 });
 
-export async function sendStudentOtpEmail(to: string, code: string) {
-  const from = process.env.SMTP_FROM || 'noreply@orbi.org.uk';
+export async function sendOtpEmail(to: string, code: string) {
   const html = `
-    <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;max-width:520px">
-      <h2>Verify your email</h2>
-      <p>Use this 6-digit code to finish signing up:</p>
-      <div style="font-size:28px;letter-spacing:8px;font-weight:700;padding:12px 0">${code}</div>
-      <p style="color:#666">This code expires in 10 minutes.</p>
+    <div style="font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif">
+      <h2>Your Orbio verification code</h2>
+      <p>Use this code to verify your email:</p>
+      <div style="font-size:28px;font-weight:700;letter-spacing:6px;margin:16px 0">${code}</div>
+      <p>It expires in 10 minutes.</p>
     </div>
   `;
-  await transporter.sendMail({ from, to, subject: 'Your verification code', html, text: `Code: ${code}` });
+  await mailer.sendMail({
+    from: SMTP_FROM,
+    to,
+    subject: 'Your verification code',
+    text: `Your code is: ${code} (valid 10 minutes)`,
+    html,
+  });
 }
