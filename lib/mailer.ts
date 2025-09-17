@@ -7,12 +7,14 @@ const FROM_NAME  = process.env.MAIL_FROM_NAME  || 'Orbio';
 function otpHtml(code: string) {
   return `
     <div style="font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif">
-      <h2>Your Orbio verification code</h2>
+      <h2>Hi,Your Orbio verification code </h2>
       <p>Use this code to verify your email:</p>
       <div style="font-size:28px;font-weight:700;letter-spacing:6px;margin:16px 0">
         ${code}
       </div>
+      <p>Enter it on the Orbio page to finish sign-up.</p>
       <p>This code expires in 10 minutes.</p>
+      <p>If you didn’t request this, you can ignore this email.</p>
     </div>
   `;
 }
