@@ -7,29 +7,26 @@ import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import type { Database } from '@/types/supabase';
 
 type SignupForm = { email: string; password: string; username: string };
-type SignupFlow = 'normal' | 'student';
+type SignupFlow = 'normal' | 'student_sso' | 'student'; // 'student' kept for backward-compat (treated as student_sso)
 type AnimState = 'idle' | 'prep' | 'launching' | 'done';
 
 type AvatarItem = { id: string; thumb: string; full: string };
 
 const AVATARS: AvatarItem[] = [
-  { id: 'a1', thumb: '/avatars/thumbs/a1-thumb.png', full: '/avatars/full/a1-full.png' },
-  { id: 'a2', thumb: '/avatars/thumbs/a2-thumb.png', full: '/avatars/full/a2-full.png' },
-  { id: 'a3', thumb: '/avatars/thumbs/a3-thumb.png', full: '/avatars/full/a3-full.png' },
-  { id: 'a4', thumb: '/avatars/thumbs/a4-thumb.png', full: '/avatars/full/a4-full.png' },
-  { id: 'a5', thumb: '/avatars/thumbs/a5-thumb.png', full: '/avatars/full/a5-full.png' },
-  { id: 'a6', thumb: '/avatars/thumbs/a6-thumb.png', full: '/avatars/full/a6-full.png' },
-  { id: 'a7', thumb: '/avatars/thumbs/a7-thumb.png', full: '/avatars/full/a7-full.png' },
-  { id: 'a8', thumb: '/avatars/thumbs/a8-thumb.png', full: '/avatars/full/a8-full.png' },
-  { id: 'a9', thumb: '/avatars/thumbs/a9-thumb.png', full: '/avatars/full/a9-full.png' },
+  { id: 'a1',  thumb: '/avatars/thumbs/a1-thumb.png',  full: '/avatars/full/a1-full.png'  },
+  { id: 'a2',  thumb: '/avatars/thumbs/a2-thumb.png',  full: '/avatars/full/a2-full.png'  },
+  { id: 'a3',  thumb: '/avatars/thumbs/a3-thumb.png',  full: '/avatars/full/a3-full.png'  },
+  { id: 'a4',  thumb: '/avatars/thumbs/a4-thumb.png',  full: '/avatars/full/a4-full.png'  },
+  { id: 'a5',  thumb: '/avatars/thumbs/a5-thumb.png',  full: '/avatars/full/a5-full.png'  },
+  { id: 'a6',  thumb: '/avatars/thumbs/a6-thumb.png',  full: '/avatars/full/a6-full.png'  },
+  { id: 'a7',  thumb: '/avatars/thumbs/a7-thumb.png',  full: '/avatars/full/a7-full.png'  },
+  { id: 'a8',  thumb: '/avatars/thumbs/a8-thumb.png',  full: '/avatars/full/a8-full.png'  },
+  { id: 'a9',  thumb: '/avatars/thumbs/a9-thumb.png',  full: '/avatars/full/a9-full.png'  },
   { id: 'a10', thumb: '/avatars/thumbs/a10-thumb.png', full: '/avatars/full/a10-full.png' },
   { id: 'a11', thumb: '/avatars/thumbs/a11-thumb.png', full: '/avatars/full/a11-full.png' },
 ];
 
-// ✅ Correct student endpoint
-const STUDENT_ENDPOINT = '/api/student/create';
-
-/** Build check-email URL with both email & flow (resilient to refresh). */
+/** Build /signup/check-email?e=...&flow=... for the normal flow. */
 function getCheckEmailHref(): string {
   try {
     const raw = sessionStorage.getItem('signupForm');
@@ -37,11 +34,17 @@ function getCheckEmailHref(): string {
     const flow = (sessionStorage.getItem('signupFlow') as SignupFlow | null) ?? 'normal';
     const qs = new URLSearchParams();
     if (email) qs.set('e', email);
-    qs.set('flow', flow);
+    qs.set('flow', flow === 'student' ? 'student_sso' : flow);
     return `/signup/check-email?${qs.toString()}`;
   } catch {
     return '/signup/check-email';
   }
+}
+
+/** Where to go after animation finishes for each flow. */
+function nextDestForFlow(flow: SignupFlow): string {
+  const f = flow === 'student' ? 'student_sso' : flow;
+  return f === 'student_sso' ? '/home' : getCheckEmailHref();
 }
 
 export default function SignupAvatarPage() {
@@ -63,17 +66,16 @@ export default function SignupAvatarPage() {
   const [overlay, setOverlay] = useState<{ top: number; left: number; width: number; height: number } | null>(null);
   const rocketRef = useRef<HTMLDivElement | null>(null);
 
-  // When rocket leaves screen, go to /signup/check-email
+  // When rocket leaves screen, navigate
   useEffect(() => {
     if (anim !== 'launching') return;
 
     let raf = 0;
     const start = performance.now();
-
     const go = async () => {
       try {
         if (signupPromiseRef.current) await signupPromiseRef.current;
-        router.push(getCheckEmailHref());
+        router.push(nextDestForFlow(flow));
       } catch (e: any) {
         setError(e?.message ?? 'Something went wrong.');
         setBusy(false);
@@ -86,27 +88,30 @@ export default function SignupAvatarPage() {
     const tick = () => {
       const el = rocketRef.current;
       if (el && el.getBoundingClientRect().bottom <= 0) return void go();
-      if (performance.now() - start > 12000) return void go();
+      if (performance.now() - start > 12000) return void go(); // failsafe
       raf = requestAnimationFrame(tick);
     };
 
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [anim, router]);
+  }, [anim, router, flow]);
 
   // Load form & flow from sessionStorage
   useEffect(() => {
     const raw = sessionStorage.getItem('signupForm');
-    const f = (sessionStorage.getItem('signupFlow') as SignupFlow | null) ?? 'normal';
+    let f = (sessionStorage.getItem('signupFlow') as SignupFlow | null) ?? 'normal';
+    // Backward-compat: treat 'student' as the new student_sso path
+    if (f === 'student') f = 'student_sso';
     setFlow(f);
 
-    if (!raw) return router.replace('/signup');
+    if (!raw && f === 'normal') return router.replace('/signup');
     try {
-      const parsed: SignupForm = JSON.parse(raw);
+      // For student_sso, we still keep username in signupForm (set on /verify/complete)
+      const parsed: SignupForm | null = raw ? JSON.parse(raw) : null;
       setForm(parsed);
       setSelected(AVATARS[0]?.id ?? null);
     } catch {
-      router.replace('/signup');
+      if (f === 'normal') router.replace('/signup');
     }
   }, [router]);
 
@@ -134,33 +139,50 @@ export default function SignupAvatarPage() {
       });
   }
 
-  /** Student flow: call our server to create user + send OTP (no Supabase email) */
-  async function startStudentOtp(): Promise<void> {
-    if (!form || !selected) throw new Error('Please choose an avatar.');
-    const res = await fetch(STUDENT_ENDPOINT, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        email: form.email,
-        password: form.password,
-        username: form.username,
-        // ✅ server expects this exact key
-        presetAvatarId: selected,
-      }),
-    });
-    if (!res.ok) {
-      let msg = 'Could not start student verification.';
-      try { msg = (await res.json())?.error || msg; } catch {}
-      throw new Error(msg);
-    }
+  /** Student SSO flow: user is already authenticated; just upsert profile with chosen avatar. */
+  async function finalizeStudentSSO(selectedAvatarId: string): Promise<void> {
+    const [{ data: userData }] = await Promise.all([supabase.auth.getUser()]);
+    const u = userData.user;
+    if (!u?.id) throw new Error('You are not signed in after Microsoft verification.');
+
+    // Get username from sessionStorage (set on /verify/complete) or from metadata
+    let username: string | undefined;
+    try {
+      const raw = sessionStorage.getItem('signupForm');
+      username = raw ? JSON.parse(raw)?.username : undefined;
+    } catch {}
+    if (!username) username = (u.user_metadata as any)?.username;
+    if (!username) throw new Error('Missing username.');
+
+    const { error } = await supabase
+      .from('profiles')
+      .upsert({
+        id: u.id,
+        username,
+        avatar_id: selectedAvatarId,
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
   }
 
   async function onFinish() {
-    if (!form || !selected) return setError('Please choose an avatar.');
+    if (!selected) return setError('Please choose an avatar.');
     setError(null);
     setBusy(true);
 
-    signupPromiseRef.current = flow === 'student' ? startStudentOtp() : signUpNormal();
+    // Kick off the backend work depending on flow
+    if (flow === 'student_sso') {
+      signupPromiseRef.current = finalizeStudentSSO(selected);
+    } else {
+      // normal
+      if (!form) {
+        setBusy(false);
+        return setError('Missing signup form.');
+      }
+      signupPromiseRef.current = signUpNormal();
+    }
 
     // animation prep
     const el = stageImgRef.current;
@@ -178,7 +200,7 @@ export default function SignupAvatarPage() {
     setAnim('done');
     try {
       if (signupPromiseRef.current) await signupPromiseRef.current;
-      router.push(getCheckEmailHref());
+      router.push(nextDestForFlow(flow));
     } catch (e: any) {
       setError(e?.message ?? 'Something went wrong.');
       setBusy(false);
@@ -211,8 +233,8 @@ export default function SignupAvatarPage() {
   });
 
   const helperText =
-    flow === 'student'
-      ? `We’ll email a 6-digit code to ${form?.email}. Enter it on the next screen to confirm.`
+    (flow === 'student_sso')
+      ? `You're verified with Microsoft. We'll finalize your profile with this avatar and take you straight in.`
       : `We’ll send a verification link to ${form?.email}. Click it to confirm your account.`;
 
   return (
@@ -280,6 +302,7 @@ export default function SignupAvatarPage() {
       {/* Launch overlay */}
       {(anim === 'prep' || anim === 'launching') && overlay && stageItem?.full && (
         <div className="fixed inset-0 z-30 pointer-events-none">
+          {/* Rocket */}
           <div className="absolute" style={{ top: overlay.top, left: overlay.left, width: overlay.width, height: overlay.height }}>
             <div
               ref={rocketRef}
@@ -297,6 +320,7 @@ export default function SignupAvatarPage() {
             </div>
           </div>
 
+          {/* Ground FX */}
           {anim === 'launching' && (
             <div className="absolute bottom-[100px] left-1/2 -translate-x-1/2 z-20">
               <div className="shockwave" />
@@ -307,6 +331,7 @@ export default function SignupAvatarPage() {
         </div>
       )}
 
+      {/* Styles */}
       <style jsx global>{`
         @keyframes anticipateMotion { 0% {transform: translateY(0) scale(1);} 50% {transform: translateY(6px) scale(0.97,0.98);} 100% {transform: translateY(0) scale(1);} }
         @keyframes liftoff { 0%{transform:translateY(0);opacity:1;} 40%{transform:translateY(-40vh);} 80%{transform:translateY(-110vh);} 100%{transform:translateY(-200vh);} }
@@ -321,14 +346,14 @@ export default function SignupAvatarPage() {
         .pop-only{animation:bubblePop 1.8s ease-out forwards;}
         .smoke{position:absolute;bottom:-4px;left:50%;transform:translateX(-50%);width:140px;height:90px;pointer-events:none;filter:blur(2px);}
         .smoke-puff{position:absolute;bottom:0;left:50%;width:var(--s,22px);height:var(--s,22px);margin-left:calc(var(--s,22px)/-2);border-radius:999px;background:radial-gradient(circle at 40% 40%,rgba(255,255,255,.9),rgba(200,200,200,.55) 60%,rgba(200,200,200,0) 75%);opacity:0;animation:smokeRise 2.2s ease-out var(--d,0s) forwards;}
-        @keyframes smokeRise{0%{transform:translate(var(--x,0px),10px) scale(.6);opacity:0;}10%{opacity:.55;}50%{transform:translate(calc(var(--x,0px) * 1.2),-25px) scale(1);opacity:.75;}100%{transform:translate(calc(var(--x,0px) * 1.8),-70px) scale(1.25);opacity:0;} }
+        @keyframes smokeRise{0%{transform:translate(var(--x,0px),10px) scale(.6);opacity:0;}10%{opacity:.55;}50%{transform:translate(calc(var(--x,0px) * 1.2),-25px) scale(1);opacity:.75;}100%{transform:translate(calc(var(--x,0px) * 1.8),-70px) scale(1.25);opacity:0;}
         .ground-smoke{position:absolute;bottom:-8px;left:50%;transform:translateX(-50%);width:560px;height:170px;pointer-events:none;filter:blur(3px);}
         .ground-cloud{position:absolute;bottom:0;left:calc(50% + var(--gx,0px));width:var(--gs,60px);height:var(--gs,60px);margin-left:calc(var(--gs,60px)/-2);border-radius:9999px;background:radial-gradient(circle at 50% 50%,rgba(235,235,235,.95),rgba(185,185,185,.62) 60%,rgba(180,180,180,0) 75%);opacity:0;animation:groundBlast 2.6s cubic-bezier(.2,.7,.1,1) var(--gd,0s) forwards;}
-        @keyframes groundBlast{0%{transform:translateY(12px) scale(.6);opacity:0;}10%{opacity:.85;transform:translateY(2px) scale(1.05);}30%{transform:translateY(0) scale(1.2);opacity:.98;}60%{transform:translateY(4px) scale(1.35);opacity:.9;}100%{transform:translateY(10px) scale(1.55);opacity:0;} }
+        @keyframes groundBlast{0%{transform:translateY(12px) scale(.6);opacity:0;}10%{opacity:.85;transform:translateY(2px) scale(1.05);}30%{transform:translateY(0) scale(1.2);opacity:.98;}60%{transform:translateY(4px) scale(1.35);opacity:.9;}100%{transform:translateY(10px) scale(1.55);opacity:0;}
         .pad-haze{position:absolute;bottom:-10px;left:50%;transform:translateX(-50%);width:700px;height:120px;border-radius:50%;background:radial-gradient(ellipse at center,rgba(220,220,220,.8) 0%,rgba(205,205,205,.6) 55%,rgba(210,210,210,0) 72%);filter:blur(6px);opacity:0;animation:padSpread 3.1s ease-out .05s forwards;}
-        @keyframes padSpread{0%{transform:translateX(-50%) scale(.7,.55);opacity:0;}20%{opacity:.75;}55%{transform:translateX(-50%) scale(1.35,.95);opacity:.9;}100%{transform:translateX(-50%) scale(1.9,1.05);opacity:0;} }
+        @keyframes padSpread{0%{transform:translateX(-50%) scale(.7,.55);opacity:0;}20%{opacity:.75;}55%{transform:translateX(-50%) scale(1.35,.95);opacity:.9;}100%{transform:translateX(-50%) scale(1.9,1.05);opacity:0;}
         .shockwave{position:absolute;bottom:-6px;left:50%;transform:translateX(-50%);width:40px;height:12px;border-radius:999px;border:3px solid rgba(230,230,230,0.8);filter:blur(1px);opacity:0;animation:shock .7s ease-out .05s forwards;}
-        @keyframes shock{0%{opacity:0;transform:translateX(-50%) scaleX(.6);}15%{opacity:.8;}100%{opacity:0;transform:translateX(-50%) scaleX(9);} }
+        @keyframes shock{0%{opacity:0;transform:translateX(-50%) scaleX(.6);}15%{opacity:.8;}100%{opacity:0;transform:translateX(-50%) scaleX(9);}
       `}</style>
     </div>
   );
