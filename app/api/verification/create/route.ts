@@ -60,7 +60,7 @@ export async function POST(req: Request) {
 
     // supabase admin (server vars)
     const admin = createClient(
-      REQUIRED(process.env.SUPABASE_URL, 'SUPABASE_URL'),
+      REQUIRED(process.env.NEXT_PUBLIC_SUPABASE_URL, 'NEXT_PUBLIC_SUPABASE_URL'),
       REQUIRED(process.env.SUPABASE_SERVICE_ROLE_KEY, 'SUPABASE_SERVICE_ROLE_KEY'),
       { auth: { persistSession: false } }
     );
