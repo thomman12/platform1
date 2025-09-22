@@ -3,11 +3,17 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
-import { Database } from '@/types/supabase';
+import type { Database } from '@/types/supabase';
 import Peer from 'simple-peer';
+
+
 
 type Role = 'speaker' | 'listener';
 type PresenceParticipant = { ap_profile_id: string; role: Role };
+
+/* ---------- Narrow types for posts table ---------- */
+type PostsRow = Database['public']['Tables']['posts']['Row'];
+type PostsUpdate = Database['public']['Tables']['posts']['Update'];
 
 /* ---------- Remote audio element (attach via ref, iOS-safe) ---------- */
 function RemoteAudio({ id, stream }: { id: string; stream: MediaStream }) {
@@ -115,8 +121,9 @@ export default function AudioRoomPage() {
       const { data, error } = await supabase
         .from('posts')
         .select('user_id')
-        .eq('id', postId)
-        .single();
+        .eq('id', postId as string)
+        .single<Pick<PostsRow, 'user_id'>>();
+
       if (!error && data) {
         setPostOwnerId(data.user_id as string);
         console.log('[post] owner:', data.user_id);
@@ -129,8 +136,8 @@ export default function AudioRoomPage() {
     try {
       await supabase
         .from('posts')
-        .update({ audio_room_active: active })
-        .eq('id', postId)
+        .update({ audio_room_active: active } as PostsUpdate)
+        .eq('id', postId as string)
         .eq('user_id', postOwnerId!); // only the owner record should flip it
       console.log('[room]', active ? 'activated' : 'deactivated');
     } catch (e) {

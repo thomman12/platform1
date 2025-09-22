@@ -1,3 +1,4 @@
+// app/(auth)/signup/student/page.tsx
 'use client';
 
 import { useState } from 'react';
@@ -7,7 +8,7 @@ import AuthBrand from '@/app/components/AuthBrand';
 
 type SignupData = { email: string; password: string; username: string };
 
-export default function SignupPage() {
+export default function StudentSignupPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [username, setUsername] = useState('');
@@ -16,21 +17,23 @@ export default function SignupPage() {
 
   const handleNext = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email || !password || !username) return setError('Please fill in email, password, and username.');
-    if (password.length < 6) return setError('Password must be at least 6 characters.');
+    if (!email || !password || !username) {
+      return setError('Please fill in email, password, and username.');
+    }
+    if (password.length < 6) {
+      return setError('Password must be at least 6 characters.');
+    }
 
     const payload: SignupData = { email, password, username };
     sessionStorage.setItem('signupForm', JSON.stringify(payload));
-
-   sessionStorage.setItem('signupFlow', 'normal');
-
+    sessionStorage.setItem('signupFlow', 'student'); // mark student route
 
     router.push('/signup/avatar');
   };
 
   return (
     <div className="w-full max-w-md mx-auto">
-      {/* Brand header (fluid mascot sizing) */}
+      {/* Brand header */}
       <AuthBrand />
 
       {/* Card */}
@@ -39,14 +42,20 @@ export default function SignupPage() {
           {error && <p className="text-sm text-red-600">{error}</p>}
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              University Email
+            </label>
             <input
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
+              placeholder="you@university.ac.uk"
               className="w-full rounded-md border border-gray-300 bg-white/90 px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500"
             />
+            <p className="mt-1 text-xs text-gray-500">
+              Use your university address (e.g., <code>@*.ac.uk</code> or <code>@*.edu</code>) for automatic student verification after email confirm.
+            </p>
           </div>
 
           <div>
@@ -91,15 +100,15 @@ export default function SignupPage() {
           </p>
 
           <div className="text-sm text-gray-600">
-        Are you a university student?{" "}
-        <Link
-          href="signup/student"
-          className="font-medium underline underline-offset-2 hover:opacity-80"
-          aria-label="Go to student verification"
-        >
-          Verify your student status
-        </Link>
-      </div>
+            Not a student?{' '}
+            <Link
+              href="/signup"
+              className="font-medium underline underline-offset-2 hover:opacity-80"
+              aria-label="Go to regular signup"
+            >
+              Use regular signup
+            </Link>
+          </div>
         </form>
       </div>
     </div>

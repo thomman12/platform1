@@ -1,31 +1,42 @@
+// app/page.tsx
 'use client';
 
-import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { Suspense, useEffect } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
-import { Database } from '@/types/supabase';
+import type { Database } from '@/types/supabase';
 
+export const dynamic = 'force-dynamic';
 
-export default function HomePage() {
+export default function Page() {
+  return (
+    <Suspense fallback={<p>Loading...</p>}>
+      <RootInner />
+    </Suspense>
+  );
+}
+
+function RootInner() {
   const router = useRouter();
-  const [loading, setLoading] = useState(true);
-
+  const q = useSearchParams();
   const supabase = createClientComponentClient<Database>();
 
-
   useEffect(() => {
-    const checkSession = async () => {
+    // 1) If a Supabase verification hit '/', forward it to /verified (preserve query)
+    const code = q.get('code');
+    const token_hash = q.get('token_hash');
+    const type = q.get('type');
+    if (code || (token_hash && type)) {
+      router.replace(`/verified?${q.toString()}`);
+      return;
+    }
+
+    // 2) Otherwise do your normal session-based redirect
+    (async () => {
       const { data: { session } } = await supabase.auth.getSession();
+      router.replace(session ? '/home' : '/login');
+    })();
+  }, [q, router, supabase]);
 
-      if (!session) {
-        router.push('/login');
-      } else {
-        router.push('/home'); // ✅ redirect to home
-      }
-    };
-
-    checkSession();
-  }, [router]);
-
-  return <p>Loading...</p>; // Always return something
+  return <p>Loading...</p>;
 }
