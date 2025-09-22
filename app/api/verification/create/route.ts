@@ -1,9 +1,15 @@
+
+
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
+
 import { NextResponse } from 'next/server';
 import crypto from 'crypto';
 import nodemailer from 'nodemailer';
 import { createClient } from '@supabase/supabase-js';
 
-export const runtime = 'nodejs';
+
 
 function b64url(input: Buffer | string) {
   const buf = Buffer.isBuffer(input) ? input : Buffer.from(input, 'utf8');
