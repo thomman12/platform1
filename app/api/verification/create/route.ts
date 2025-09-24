@@ -14,14 +14,18 @@ const REQUIRED = (v: string | undefined, name: string) => {
 
 const b64url = (input: Buffer | string) =>
   (Buffer.isBuffer(input) ? input : Buffer.from(input, 'utf8'))
-    .toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+
 const sha256Base64Url = (s: string) => b64url(crypto.createHash('sha256').update(s).digest());
 const randToken = (len = 32) => b64url(crypto.randomBytes(len));
 const sixDigit = () => String(Math.floor(100000 + Math.random() * 900000));
 
 const domainMatches = (emailDomain: string, baseDomain: string) => {
   const e = emailDomain.toLowerCase();
-  const b = baseDomain.toLowerCase();
+  const b = (baseDomain || '').toLowerCase();
   return e === b || e.endsWith(`.${b}`);
 };
 
@@ -43,9 +47,8 @@ export async function POST(req: Request) {
   try {
     const body = await req.json().catch(() => ({} as any));
     const email = String(body?.email || '').trim().toLowerCase();
-    const rawSelected = typeof body?.selectedInstitutionId === 'string'
-      ? body.selectedInstitutionId.trim()
-      : '';
+    const rawSelected =
+      typeof body?.selectedInstitutionId === 'string' ? body.selectedInstitutionId.trim() : '';
     const user_id = body?.user_id ?? null;
 
     if (!email || !email.includes('@')) {
@@ -53,19 +56,25 @@ export async function POST(req: Request) {
     }
     const emailDomain = email.split('@').pop()!.toLowerCase();
 
-    // Admin client (server-side URL + service role)
+    // Supabase admin client (server-side creds)
     const admin = createClient(
       REQUIRED(process.env.SUPABASE_URL, 'SUPABASE_URL'),
       REQUIRED(process.env.SUPABASE_SERVICE_ROLE_KEY, 'SUPABASE_SERVICE_ROLE_KEY'),
       { auth: { persistSession: false } }
     );
 
-    // If student flow, resolve the provided value (uuid or slug) to the actual UUID
+    /**
+     * Resolve the institution the user selected:
+     * - Accept UUID (id)
+     * - OR slug
+     * - OR your non-UUID text id like "inst_aru"
+     * Then enforce that the email domain matches one of institution_domains.base_domain.
+     */
     let institutionIdUUID: string | null = null;
 
     if (rawSelected) {
+      // 1) If it looks like a UUID, try that first
       if (looksLikeUuid(rawSelected)) {
-        // Verify this UUID exists (and optionally read slug if needed)
         const { data: instById, error: instByIdErr } = await admin
           .from('institutions')
           .select('id')
@@ -76,29 +85,30 @@ export async function POST(req: Request) {
           console.error('[verification/create] institutions id lookup error:', instByIdErr);
           return NextResponse.json({ message: 'University lookup failed' }, { status: 500 });
         }
-        if (!instById) {
-          return NextResponse.json({ message: 'Selected university not found' }, { status: 400 });
+        if (instById) {
+          institutionIdUUID = instById.id;
         }
-        institutionIdUUID = instById.id;
-      } else {
-        // Treat as slug (or any stable string key); resolve to UUID id
-        const { data: instBySlug, error: instBySlugErr } = await admin
-          .from('institutions')
-          .select('id, slug')
-          .eq('slug', rawSelected)
-          .maybeSingle();
-
-        if (instBySlugErr) {
-          console.error('[verification/create] institutions slug lookup error:', instBySlugErr);
-          return NextResponse.json({ message: 'University lookup failed' }, { status: 500 });
-        }
-        if (!instBySlug) {
-          return NextResponse.json({ message: 'Selected university not found' }, { status: 400 });
-        }
-        institutionIdUUID = instBySlug.id;
       }
 
-      // Enforce domain ↔ university with suffix matching
+      // 2) If not UUID or not found, try slug OR (non-UUID) id (e.g. "inst_aru")
+      if (!institutionIdUUID) {
+        const { data: inst, error: instErr } = await admin
+          .from('institutions')
+          .select('id, slug')
+          .or(`slug.eq.${rawSelected},id.eq.${rawSelected}`)
+          .maybeSingle();
+
+        if (instErr) {
+          console.error('[verification/create] institutions slug/id lookup error:', instErr);
+          return NextResponse.json({ message: 'University lookup failed' }, { status: 500 });
+        }
+        if (!inst) {
+          return NextResponse.json({ message: 'Selected university not found' }, { status: 400 });
+        }
+        institutionIdUUID = inst.id;
+      }
+
+      // 3) Enforce email domain ↔ institution
       const { data: domRows, error: domErr } = await admin
         .from('institution_domains')
         .select('base_domain')
@@ -109,10 +119,7 @@ export async function POST(req: Request) {
         return NextResponse.json({ message: 'Domain lookup failed' }, { status: 500 });
       }
 
-      const ok = (domRows ?? []).some(({ base_domain }) =>
-        domainMatches(emailDomain, base_domain)
-      );
-
+      const ok = (domRows ?? []).some(({ base_domain }) => domainMatches(emailDomain, base_domain));
       if (!ok) {
         return NextResponse.json(
           { message: 'Email domain does not match the selected university.' },
@@ -128,7 +135,7 @@ export async function POST(req: Request) {
     const codeHash = sha256Base64Url(code);
     const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(); // 24h
 
-    // Store verification row (include institution_id UUID if we have it)
+    // Store verification row (include institution_id if resolved)
     const { data: row, error: insErr } = await admin
       .from('verifications')
       .insert({
@@ -137,7 +144,7 @@ export async function POST(req: Request) {
         token_hash: tokenHash,
         code_hash: codeHash,
         expires_at: expiresAt,
-        institution_id: institutionIdUUID, // 👈 now always UUID or null
+        institution_id: institutionIdUUID, // UUID or your text id (depending on your schema), or null
       })
       .select('id')
       .single();
