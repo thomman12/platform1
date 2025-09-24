@@ -7,102 +7,128 @@ import crypto from 'crypto';
 import nodemailer from 'nodemailer';
 import { createClient } from '@supabase/supabase-js';
 
-const REQUIRED = (val: string | undefined, name: string) => {
-  if (!val) throw new Error(`Missing required env: ${name}`);
-  return val;
+const REQUIRED = (v: string | undefined, name: string) => {
+  if (!v) throw new Error(`Missing required env: ${name}`);
+  return v;
 };
 
-function b64url(input: Buffer | string) {
-  const buf = Buffer.isBuffer(input) ? input : Buffer.from(input, 'utf8');
-  return buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-function sha256Base64Url(s: string) {
-  return b64url(crypto.createHash('sha256').update(s).digest());
-}
-function randToken(len = 32) {
-  return b64url(crypto.randomBytes(len));
-}
-function sixDigit() {
-  // 100000–999999 (always 6 digits)
-  return String(Math.floor(100000 + Math.random() * 900000));
-}
+const b64url = (input: Buffer | string) =>
+  (Buffer.isBuffer(input) ? input : Buffer.from(input, 'utf8'))
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+
+const sha256Base64Url = (s: string) => b64url(crypto.createHash('sha256').update(s).digest());
+const randToken = (len = 32) => b64url(crypto.randomBytes(len));
+const sixDigit = () => String(Math.floor(100000 + Math.random() * 900000));
+
+const domainMatches = (emailDomain: string, baseDomain: string) => {
+  const e = emailDomain.toLowerCase();
+  const b = baseDomain.toLowerCase();
+  return e === b || e.endsWith(`.${b}`);
+};
 
 async function getTransporter() {
   const host = process.env.BREVO_SMTP_HOST || 'smtp-relay.brevo.com';
   const port = Number(process.env.BREVO_SMTP_PORT || 587);
   const user = process.env.BREVO_SMTP_USER || process.env.SMTP_USER;
   const pass = process.env.BREVO_SMTP_PASS || process.env.SMTP_PASS;
-
   if (!user || !pass) {
     throw new Error('Brevo SMTP credentials missing: set BREVO_SMTP_USER and BREVO_SMTP_PASS.');
   }
-
-  const transporter = nodemailer.createTransport({
-    host,
-    port,
-    secure: port === 465, // 465 = SSL, 587 = STARTTLS
-    auth: { user, pass },
-  });
-
-  await transporter.verify(); // throws on bad creds or unverified sender/domain issues
+  const transporter = nodemailer.createTransport({ host, port, secure: port === 465, auth: { user, pass } });
+  await transporter.verify();
   return transporter;
 }
 
 export async function POST(req: Request) {
   try {
     const body = await req.json().catch(() => ({} as any));
-    const email = String(body?.email || '').trim();
+    const email = String(body?.email || '').trim().toLowerCase();
+    const selectedInstitutionId: string | null =
+      (typeof body?.selectedInstitutionId === 'string' && body.selectedInstitutionId.trim()) || null;
     const user_id = body?.user_id ?? null;
 
-    if (!email) {
-      return NextResponse.json({ message: 'email required' }, { status: 400 });
+    if (!email || !email.includes('@')) {
+      return NextResponse.json({ message: 'Valid email required' }, { status: 400 });
     }
+    const emailDomain = email.split('@').pop()!.toLowerCase();
 
-    // supabase admin (server vars)
+    // Admin client (server-side URL + service role)
     const admin = createClient(
-      REQUIRED(process.env.NEXT_PUBLIC_SUPABASE_URL, 'NEXT_PUBLIC_SUPABASE_URL'),
+      REQUIRED(process.env.SUPABASE_URL, 'SUPABASE_URL'),
       REQUIRED(process.env.SUPABASE_SERVICE_ROLE_KEY, 'SUPABASE_SERVICE_ROLE_KEY'),
       { auth: { persistSession: false } }
     );
 
-    // create token + code
+    // If a university was chosen (student flow), enforce domain ↔ university match using suffix logic.
+    if (selectedInstitutionId) {
+      const { data: rows, error: domErr } = await admin
+        .from('institution_domains')
+        .select('base_domain')
+        .eq('institution_id', selectedInstitutionId);
+
+      if (domErr) {
+        console.error('[verification/create] domain lookup failed:', domErr);
+        return NextResponse.json({ message: 'Domain lookup failed' }, { status: 500 });
+      }
+
+      const ok = (rows ?? []).some(({ base_domain }) => domainMatches(emailDomain, base_domain));
+      if (!ok) {
+        return NextResponse.json(
+          { message: 'Email domain does not match the selected university.' },
+          { status: 400 }
+        );
+      }
+    }
+
+    // Create link token + 6-digit code
     const rawToken = randToken(32);
     const tokenHash = sha256Base64Url(rawToken);
     const code = sixDigit();
     const codeHash = sha256Base64Url(code);
-    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(); // 24h
 
-    // store verification row
+    // Store verification row (include institution_id when provided)
     const { data: row, error: insErr } = await admin
       .from('verifications')
-      .insert({ email, user_id, token_hash: tokenHash, code_hash: codeHash, expires_at: expiresAt })
+      .insert({
+        email,
+        user_id,
+        token_hash: tokenHash,
+        code_hash: codeHash,
+        expires_at: expiresAt,
+        institution_id: selectedInstitutionId ?? null,
+      })
       .select('id')
       .single();
 
     if (insErr) {
       console.error('[verification/create] insert error:', insErr);
-      return NextResponse.json({ message: 'DB insert failed', detail: insErr.message }, { status: 500 });
+      return NextResponse.json({ message: 'DB insert failed' }, { status: 500 });
     }
 
     const vt = row!.id;
     const base = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000';
     const verifiedUrl = `${base}/verified?vt=${encodeURIComponent(vt)}`;
 
-    // email content
-    const from = REQUIRED(process.env.EMAIL_FROM, 'EMAIL_FROM'); // must be a verified Brevo sender/domain
-    const subject = 'Verify your account';
+    // Send email (link + 6-digit code)
+    const from = REQUIRED(process.env.EMAIL_FROM, 'EMAIL_FROM');
+    const subject = 'Verify your email';
     const html = `
       <p>Click the link to finish verification:</p>
       <p><a href="${verifiedUrl}">${verifiedUrl}</a></p>
-      <p>Then enter this 6-digit code on the page: <b style="font-size:18px;letter-spacing:2px">${code}</b></p>
-      <p>This code expires in 24 hours.</p>
+      <p>Then enter this 6-digit code on the page:
+        <b style="font-size:18px;letter-spacing:2px">${code}</b>
+      </p>
+      <p>This link and code expire in 24 hours.</p>
     `;
     const text =
-      `Finish verification: ${verifiedUrl}\n` +
+      `Finish verification:\n${verifiedUrl}\n\n` +
       `6-digit code: ${code}\n` +
-      `This code expires in 24 hours.\n`;
+      `This link and code expire in 24 hours.\n`;
 
-    // send via Brevo
     let sent = false;
     let sendError: unknown = null;
     try {
@@ -116,7 +142,6 @@ export async function POST(req: Request) {
     }
 
     if (!sent) {
-      // flip this to true temporarily if you want the raw SMTP error in the client
       const allowDebug = process.env.ALLOW_EMAIL_DEBUG === '1';
       return NextResponse.json(
         { message: 'Email send failed', ...(allowDebug ? { detail: String((sendError as any)?.message || sendError) } : {}) },

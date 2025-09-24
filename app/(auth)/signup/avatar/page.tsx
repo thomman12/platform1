@@ -103,8 +103,13 @@ export default function SignupAvatarPage() {
   const stageId = useMemo(() => hovered ?? selected ?? AVATARS[0]?.id, [hovered, selected]);
   const stageItem = AVATARS.find((a) => a.id === stageId);
 
+  /**
+   * NEW: After Supabase signUp, if flow === 'student', also call /api/verification/create
+   * to send the link + 6-digit code with the selected institution.
+   */
   async function signUp(): Promise<void> {
     if (!form || !selected) throw new Error('Please choose an avatar.');
+
     const { data, error } = await supabase.auth.signUp({
       email: form.email,
       password: form.password,
@@ -117,8 +122,35 @@ export default function SignupAvatarPage() {
       },
     });
     if (error) throw error;
+
     // Keep user id for resend on check-email
     try { if (data?.user?.id) sessionStorage.setItem('signupUserId', data.user.id); } catch {}
+
+    // --- NEW: student flow triggers our verification email (link + code) ---
+    if (flow === 'student') {
+      const selectedInstitutionId = sessionStorage.getItem('studentSelectedInstitutionId');
+      const studentEmail = sessionStorage.getItem('studentEmail') ?? form.email;
+
+      if (!selectedInstitutionId) {
+        throw new Error('Missing university selection. Please go back and choose your university.');
+      }
+
+      const res = await fetch('/api/verification/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: studentEmail,
+          selectedInstitutionId,
+          user_id: data?.user?.id ?? null,
+        }),
+      });
+
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(body?.message || 'Could not send verification email.');
+      }
+    }
+    // --- END NEW ---
   }
 
   async function onFinish() {

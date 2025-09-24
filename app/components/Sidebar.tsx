@@ -129,7 +129,10 @@ export default function Sidebar() {
         </Link>
 
 
-        
+        <Link href="/orbit" className="flex items-center gap-2 px-3 py-2 rounded hover:bg-gray-100">
+      <span>🪐</span>
+      <span>Orbit</span>
+    </Link>
 
 
 
