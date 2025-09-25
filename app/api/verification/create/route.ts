@@ -14,11 +14,7 @@ const REQUIRED = (v: string | undefined, name: string) => {
 
 const b64url = (input: Buffer | string) =>
   (Buffer.isBuffer(input) ? input : Buffer.from(input, 'utf8'))
-    .toString('base64')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/, '');
-
+    .toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 const sha256Base64Url = (s: string) => b64url(crypto.createHash('sha256').update(s).digest());
 const randToken = (len = 32) => b64url(crypto.randomBytes(len));
 const sixDigit = () => String(Math.floor(100000 + Math.random() * 900000));
@@ -28,9 +24,6 @@ const domainMatches = (emailDomain: string, baseDomain: string) => {
   const b = (baseDomain || '').toLowerCase();
   return e === b || e.endsWith(`.${b}`);
 };
-
-const looksLikeUuid = (s: string) =>
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
 
 async function getTransporter() {
   const host = process.env.BREVO_SMTP_HOST || 'smtp-relay.brevo.com';
@@ -47,8 +40,7 @@ export async function POST(req: Request) {
   try {
     const body = await req.json().catch(() => ({} as any));
     const email = String(body?.email || '').trim().toLowerCase();
-    const rawSelected =
-      typeof body?.selectedInstitutionId === 'string' ? body.selectedInstitutionId.trim() : '';
+    const rawSelected = typeof body?.selectedInstitutionId === 'string' ? body.selectedInstitutionId.trim() : '';
     const user_id = body?.user_id ?? null;
 
     if (!email || !email.includes('@')) {
@@ -56,63 +48,36 @@ export async function POST(req: Request) {
     }
     const emailDomain = email.split('@').pop()!.toLowerCase();
 
-    // Supabase admin client (server-side creds)
     const admin = createClient(
       REQUIRED(process.env.SUPABASE_URL, 'SUPABASE_URL'),
       REQUIRED(process.env.SUPABASE_SERVICE_ROLE_KEY, 'SUPABASE_SERVICE_ROLE_KEY'),
       { auth: { persistSession: false } }
     );
 
-    /**
-     * Resolve the institution the user selected:
-     * - Accept UUID (id)
-     * - OR slug
-     * - OR your non-UUID text id like "inst_aru"
-     * Then enforce that the email domain matches one of institution_domains.base_domain.
-     */
-    let institutionIdUUID: string | null = null;
+    // Resolve selected institution by id OR slug (both are text in your schema)
+    let institutionId: string | null = null;
 
     if (rawSelected) {
-      // 1) If it looks like a UUID, try that first
-      if (looksLikeUuid(rawSelected)) {
-        const { data: instById, error: instByIdErr } = await admin
-          .from('institutions')
-          .select('id')
-          .eq('id', rawSelected)
-          .maybeSingle();
+      const { data: inst, error: instErr } = await admin
+        .from('institutions')
+        .select('id, slug')
+        .or(`id.eq.${rawSelected},slug.eq.${rawSelected}`)
+        .maybeSingle();
 
-        if (instByIdErr) {
-          console.error('[verification/create] institutions id lookup error:', instByIdErr);
-          return NextResponse.json({ message: 'University lookup failed' }, { status: 500 });
-        }
-        if (instById) {
-          institutionIdUUID = instById.id;
-        }
+      if (instErr) {
+        console.error('[verification/create] institutions lookup error:', instErr);
+        return NextResponse.json({ message: 'University lookup failed' }, { status: 500 });
       }
-
-      // 2) If not UUID or not found, try slug OR (non-UUID) id (e.g. "inst_aru")
-      if (!institutionIdUUID) {
-        const { data: inst, error: instErr } = await admin
-          .from('institutions')
-          .select('id, slug')
-          .or(`slug.eq.${rawSelected},id.eq.${rawSelected}`)
-          .maybeSingle();
-
-        if (instErr) {
-          console.error('[verification/create] institutions slug/id lookup error:', instErr);
-          return NextResponse.json({ message: 'University lookup failed' }, { status: 500 });
-        }
-        if (!inst) {
-          return NextResponse.json({ message: 'Selected university not found' }, { status: 400 });
-        }
-        institutionIdUUID = inst.id;
+      if (!inst) {
+        return NextResponse.json({ message: 'Selected university not found' }, { status: 400 });
       }
+      institutionId = inst.id;
 
-      // 3) Enforce email domain ↔ institution
+      // Enforce email domain ↔ institution
       const { data: domRows, error: domErr } = await admin
         .from('institution_domains')
         .select('base_domain')
-        .eq('institution_id', institutionIdUUID);
+        .eq('institution_id', institutionId);
 
       if (domErr) {
         console.error('[verification/create] domain lookup failed:', domErr);
@@ -128,14 +93,14 @@ export async function POST(req: Request) {
       }
     }
 
-    // Create link token + 6-digit code
+    // Create token + code
     const rawToken = randToken(32);
     const tokenHash = sha256Base64Url(rawToken);
     const code = sixDigit();
     const codeHash = sha256Base64Url(code);
-    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(); // 24h
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
 
-    // Store verification row (include institution_id if resolved)
+    // Insert verification (institution_id is TEXT now)
     const { data: row, error: insErr } = await admin
       .from('verifications')
       .insert({
@@ -144,7 +109,7 @@ export async function POST(req: Request) {
         token_hash: tokenHash,
         code_hash: codeHash,
         expires_at: expiresAt,
-        institution_id: institutionIdUUID, // UUID or your text id (depending on your schema), or null
+        institution_id: institutionId, // text or null
       })
       .select('id')
       .single();
@@ -158,7 +123,7 @@ export async function POST(req: Request) {
     const base = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000';
     const verifiedUrl = `${base}/verified?vt=${encodeURIComponent(vt)}`;
 
-    // Send email (link + 6-digit code)
+    // Email (link + code)
     const from = REQUIRED(process.env.EMAIL_FROM, 'EMAIL_FROM');
     const subject = 'Verify your email';
     const html = `
