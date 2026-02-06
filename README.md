@@ -1,11 +1,11 @@
-Orbi – Community Platform
+#Orbi – Community Platform
 
 Orbi is a full-stack community platform that allows users to discover communities, follow topics, and interact with posts through a modern, responsive web interface.
 
 🌐 Live site: https://orbi.org.uk
 
-Tech Stack
-Frontend
+##Tech Stack
+###Frontend
 
 React
 
@@ -19,7 +19,7 @@ React Hooks (useState, useEffect)
 
 Client-side routing
 
-Backend
+###Backend
 
 REST APIs
 
@@ -27,7 +27,7 @@ SQL (relational database)
 
 Authentication & authorisation logic
 
-Tools & Deployment
+###Tools & Deployment
 
 Git & GitHub (version control)
 
@@ -35,7 +35,7 @@ Vercel (deployment)
 
 VS Code
 
-Features
+##Features
 
 User authentication with conditional UI states (logged in / logged out)
 
@@ -49,7 +49,7 @@ Responsive UI for desktop and mobile devices
 
 Loading and error states for improved user experience
 
-My Role
+##My Role
 
 I designed and built both the frontend and backend of Orbi from scratch.
 
@@ -67,7 +67,7 @@ Designing user-facing features with a focus on usability and maintainability
 
 Deploying the application to production and managing version control via GitHub
 
-Why I Built This
+##Why I Built This
 
 This project was created to:
 
