@@ -1,80 +1,106 @@
-#Orbi – Community Platform
+# Orbi – Community Platform
+
+## Overview
 
 Orbi is a full-stack community platform that allows users to discover communities, follow topics, and interact with posts through a modern, responsive web interface.
 
+The platform is designed to demonstrate how a contemporary web application can combine a structured frontend, authenticated user flows, and database-backed content in a production environment.
+
 🌐 Live site: https://orbi.org.uk
 
-##Tech Stack
-###Frontend
+---
 
-React
+## Purpose and Scope
 
-TypeScript
+This document provides a high-level overview of the Orbi platform, its architecture, and its core functionality.  
+It is intended for developers or technical readers who want to understand how the system is structured and how its main features work together.
 
-JavaScript (ES6+)
+---
 
-HTML5, CSS3
+## System Architecture
 
-React Hooks (useState, useEffect)
+Orbi follows a typical client–server architecture, where the frontend is responsible for user interaction and presentation, and the backend handles data storage, authentication, and business logic.
 
-Client-side routing
+### Frontend
 
-###Backend
+The frontend is built as a single-page web application with a focus on responsiveness and usability.
 
-REST APIs
+- React for component-based UI development  
+- TypeScript for type safety and maintainability  
+- JavaScript (ES6+) for application logic  
+- HTML5 and CSS3 for layout and styling  
+- React Hooks (`useState`, `useEffect`) for state management and side effects  
+- Client-side routing to support navigation between views  
 
-SQL (relational database)
+### Backend
 
-Authentication & authorisation logic
+The backend exposes RESTful APIs that support authenticated access to application data.
 
-###Tools & Deployment
+- REST APIs for communication between frontend and backend  
+- SQL-based relational database for structured data storage  
+- Authentication and authorisation logic to manage user access  
 
-Git & GitHub (version control)
+### Tools and Deployment
 
-Vercel (deployment)
+- Git and GitHub for version control and collaboration  
+- Vercel for deployment and hosting  
+- Visual Studio Code as the primary development environment  
 
-VS Code
+---
 
-##Features
+## Core Features
 
-User authentication with conditional UI states (logged in / logged out)
+### User Authentication
 
-Community feed with dynamic content loading
+Users can sign up, log in, and log out of the application.  
+The user interface responds dynamically to authentication state, displaying different navigation options and content depending on whether a user is signed in.
 
-Follow / unfollow communities
+### Community Discovery and Interaction
 
-Save posts for later viewing
+- Users can browse and follow communities based on their interests  
+- Community feeds load dynamically based on followed topics  
+- Users can interact with posts within communities  
 
-Responsive UI for desktop and mobile devices
+### Content Management
 
-Loading and error states for improved user experience
+- Posts can be saved for later viewing  
+- Personalised content is displayed based on user preferences and activity  
 
-##My Role
+### User Experience
 
-I designed and built both the frontend and backend of Orbi from scratch.
+- Responsive design ensures usability across desktop and mobile devices  
+- Loading and error states are handled explicitly to improve clarity and feedback  
+- UI components are designed with consistency and maintainability in mind  
 
-Key responsibilities included:
+---
 
-Building reusable React components using TypeScript
+## Implementation Responsibilities
 
-Managing component state and side effects with React hooks
+The platform was designed and implemented end-to-end, covering both frontend and backend concerns.
 
-Implementing client-side routing and conditional rendering
+Key areas of responsibility included:
 
-Integrating frontend components with backend REST APIs
+- Designing and implementing reusable frontend components using React and TypeScript  
+- Managing component state and side effects using React Hooks  
+- Implementing client-side routing and conditional rendering  
+- Integrating frontend components with backend REST APIs  
+- Designing user-facing features with a focus on clarity, usability, and maintainability  
+- Deploying the application to production and maintaining the codebase using Git-based workflows  
 
-Designing user-facing features with a focus on usability and maintainability
+---
 
-Deploying the application to production and managing version control via GitHub
+## Design Considerations
 
-##Why I Built This
+Several principles guided the development of Orbi:
 
-This project was created to:
+- **Separation of concerns:** Clear boundaries between UI, application logic, and data access  
+- **User-focused design:** Interfaces designed to be intuitive and responsive  
+- **Maintainability:** Emphasis on reusable components and readable code  
+- **Real-world workflows:** Authentication, personalisation, and data persistence handled as they would be in production systems  
 
-Gain hands-on experience building a real-world web application
+---
 
-Strengthen my frontend skills using React and TypeScript
+## Conclusion
 
-Understand how frontend and backend systems integrate in production
-
-Build a live project that reflects how modern web applications are developed
+Orbi demonstrates how a modern full-stack web application can be designed, implemented, and deployed using widely adopted technologies.  
+The project provided hands-on experience with real-world development workflows, including authentication, API integration, and responsive UI design, while reinforcing the importance of clear system structure and documentation.
