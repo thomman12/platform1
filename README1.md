@@ -27,7 +27,7 @@ Each component plays a specific role in ensuring users can securely access the a
 
 When a user signs up or logs in, the frontend calls Supabase’s authentication API using the Supabase client.
 
-At a high level:
+
 - The user provides an email and password
 - Supabase validates the credentials
 - A session is created for the authenticated user
